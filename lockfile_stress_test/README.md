@@ -14,6 +14,15 @@ be useful in debugging.
 
 Regan (Linda Blair) was the girl who was possessed in The Exorcist.
 
+To run `regan.py` with task ID `100`, lock hold time 0.5 seconds, outputting in
+file `regan.db`, and using `fasteners` as the underlying lock (via the
+`with_fasteners.py` script):
+
+```bash
+$ ./regan.py -n 100 -t 0.5 -f regan.db ./with_fasteners.py
+Ran task 100, result code was 0
+```
+
 ## `karras.py`: Result storm test
 
 This test checks what happens when a storm of processes attempts to return
@@ -30,6 +39,14 @@ The parameters of the storm are:
 
 Fr. Karras (Jason Miller) is the priest who identifies that Regan is possessed,
 and assists in the exorcism during his own crisis of faith.
+
+Run the `karras.py` test with a storm of 1000 events, sampled from a Gaussian
+with standard deviation 2.0 seconds, holding each lock for 0.5 seconds, writing
+to output file `karras.db` and using `fasteners` for the locking mechanism:
+
+```bash
+$ ./karras.py -N 1000 --stddev 2.0 -t 0.5 -f karras.db ./with_fasteners.py
+```
 
 ## `merrin.py`: Death during lock test
 
