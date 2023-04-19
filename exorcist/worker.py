@@ -3,15 +3,15 @@ import time
 import sys
 
 
+
 class Worker:
-    def __init__(self, db_engine, max_time, expected_task_time,
-                 sleep_seconds=-1):
-        self.start_time = datetime.now()
-        self.stop_time = self.start_time + max_time - expected_task_time
+    def __init__(self, taskstatusdb, taskdetailsdb, resultsdb,
+                 continue_conditions, sleep_seconds=-1):
         self.db_engine = db_engine
         self.metadata = sqla.MetaData(bind=engine)
         self.tasks_table = self.metadata.tables['tasks']
         self.sleep_seconds = sleep_seconds
+        self.continue_conditions = continue_conditions
 
         # current task is associated with the instance so that failure modes
         # (i.e., on_termination) work correctly
@@ -59,12 +59,16 @@ class Worker:
         ...
 
     def run_one_task(self):
-        while not self.task := self.select_task():
+        while not (task := self.select_task()):
             # there are no tasks available; sleep or exit
             if self.sleep_seconds > 0:
                 time.sleep(self.sleep_seconds)
             else:
                 sys.exit()
+
+        # use self.task so that we only need to register on_termination once
+        # per worker instance
+        self.task = task
 
         # do main work of the task
         # TODO: should this be wrapped with a try/except and always return a
@@ -84,6 +88,9 @@ class Worker:
 
         self.task = None
 
+    def should_get_another_task(self):
+        return all(cond() for cond in self.continue_conditions)
+
     def run(self):
-        while datetime.now() < self.stop_time:
+        while self.should_get_another_task():
             self.run_one_task()
