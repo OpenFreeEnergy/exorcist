@@ -16,5 +16,10 @@ class TaskDetailsStore(abc.ABC, Generic[TaskDetails, Result]):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    def load_task_details(self, taskid: str) -> TaskDetails:
+        """Load the task details from disk."""
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     def load_task(self, taskid: str) -> Callable[[], Result]:
         raise NotImplementedError()

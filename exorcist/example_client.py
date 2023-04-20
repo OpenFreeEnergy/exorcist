@@ -101,8 +101,12 @@ class ExampleTaskDetailsStore(TaskDetailsStore):
         with open(self.directory / f"{taskid}.p", mode='wb') as f:
             pickle.dump(task_details, f)
 
-    def load_task(self, taskid: str) -> Callable[[], ExampleResult]:
+    def load_task_details(self, taskid: str) -> ExampleTaskDetails:
         with open(self.directory / f"{taskid}.p", mode='rb') as f:
             task_details = pickle.load(f)
 
+        return task_details
+
+    def load_task(self, taskid: str) -> Callable[[], ExampleResult]:
+        task_details = self.load_task_details(taskid)
         return partial(task_details.run_task, directory=self.directory)
