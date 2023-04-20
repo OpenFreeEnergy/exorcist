@@ -75,9 +75,9 @@ def main(lock_script, nruns, stddev, lock_time, filename):
     deltas = get_delays(nruns, stddev)
     procs = []
     for taskid, delay in enumerate(deltas):
-        time.sleep(delay)
         cmd = f"./{lock_script} -n {taskid} -t {lock_time} -f {filename}"
         print(datetime.now(), delay, cmd)
+        time.sleep(delay)
         run_cmd = shlex.split(cmd)
         proc = subprocess.Popen(run_cmd)
         procs.append(proc)
