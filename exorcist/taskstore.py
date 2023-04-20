@@ -21,5 +21,6 @@ class TaskDetailsStore(abc.ABC, Generic[TaskDetails, Result]):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def load_task(self, taskid: str) -> Callable[[], Result]:
+    def run_task(self, task_details: TaskDetails) -> Result:
+        """Run the task, based on the given details"""
         raise NotImplementedError()

@@ -107,6 +107,5 @@ class ExampleTaskDetailsStore(TaskDetailsStore):
 
         return task_details
 
-    def load_task(self, taskid: str) -> Callable[[], ExampleResult]:
-        task_details = self.load_task_details(taskid)
-        return partial(task_details.run_task, directory=self.directory)
+    def run_task(self, task_details: ExampleTaskDetails) -> ExampleResult:
+        return task_details.run_task(directory=self.directory)

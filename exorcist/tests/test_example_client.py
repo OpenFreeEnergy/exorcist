@@ -92,14 +92,8 @@ class TestExampleTaskDetailsStore:
 
         assert reloaded == example_details
 
-
-    def test_load_task(self, task_store, example_details):
-        # note that this is dependent on store_task_details working, not
-        # quite true unit
-        task_store.store_task_details(example_details.label,
-                                      example_details)
-        task = task_store.load_task(example_details.label)
-        result = task()
+    def test_run_task(self, task_store, example_details):
+        result = task_store.run_task(example_details)
         assert not result.is_failure
         assert result.main_result == 1.0
         assert result.label == "foo"
@@ -112,23 +106,11 @@ class TestExampleTaskDetailsStore:
             task_func=incr
         )
 
-        # the order of storage shouldn't matter, so we intentionally store
-        # in the inverted order in this test
-        task_store.store_task_details(example_details_2.label,
-                                      example_details_2)
-        task_store.store_task_details(example_details.label,
-                                      example_details)
-
-        # order in which we load them also doesn't matter -- only the order
-        # in which we run them does
-        task2 = task_store.load_task("bar")
-        task = task_store.load_task("foo")
-
         # manually do the work of the worker here
-        result1 = task()
+        result1 = task_store.run_task(example_details)
         assert not result_store.is_failure_result(result1)
         result_store.store_result(result1)
-        result2 = task2()
+        result2 = task_store.run_task(example_details_2)
         assert not result_store.is_failure_result(result2)
 
         assert result2.main_result == 2.0
