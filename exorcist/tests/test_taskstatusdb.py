@@ -203,5 +203,16 @@ class TestTaskStatusDB:
         fresh_db.add_task("bar", requirements=["foo"])
 
     def test_add_task_network(self, fresh_db, diamond_taskid_network):
-        # fresh_db.add_task_network(diamond_taskid_network)
-        ...
+        fresh_db.add_task_network(diamond_taskid_network)
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        expected_tasks = {
+            ("A", TaskStatus.AVAILABLE.value, None, 0),
+            ("B", TaskStatus.BLOCKED.value, None, 0),
+            ("C", TaskStatus.BLOCKED.value, None, 0),
+            ("D", TaskStatus.BLOCKED.value, None, 0),
+        }
+        expected_deps = {("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")}
+        assert set(tasks) == expected_tasks
+        assert set(deps) == expected_deps
+        assert len(tasks) == len(expected_tasks)
+        assert len(deps) == len(expected_deps)

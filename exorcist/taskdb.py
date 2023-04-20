@@ -156,7 +156,7 @@ class TaskStatusDB:
         """
         all_data = [
             self._get_task_and_dep_data(node, taskid_network.pred[node])
-            for node in nx.topological_sort(taskid_network.nodes)
+            for node in nx.topological_sort(taskid_network)
         ]
         tasklists, deplists = zip(*all_data)
         tasks = sum(tasklists, [])
