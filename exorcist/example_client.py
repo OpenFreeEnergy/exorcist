@@ -16,7 +16,7 @@ from functools import partial
 from .resultstore import ResultStore
 from .taskstore import TaskDetailsStore
 
-from typing import Callable
+from typing import Callable, Union
 
 @dataclasses.dataclass
 class ExampleResult:
@@ -26,7 +26,7 @@ class ExampleResult:
     dict with an expected structure.
     """
     label: str
-    main_result: float | str
+    main_result: Union[float, str]
     is_failure: bool
 
 
