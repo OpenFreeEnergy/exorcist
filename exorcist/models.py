@@ -1,5 +1,6 @@
 from enum import Enum
-from typing import NamedTuple, TypeVar, Generic
+from typing import TypeVar, Generic
+import dataclasses
 
 # generics: the actual types here depend on the client library
 Result = TypeVar("Result")
@@ -21,7 +22,8 @@ class TaskStatus(Enum):
 # TODO: it isn't entirely clear to me that this is needed, or that this is
 # the right way to do it. but I wanted to capture the way to handle typing
 # of something like this
-class Task(NamedTuple, Generic[TaskDetails]):
+@dataclasses.dataclass
+class Task(Generic[TaskDetails]):
     """Generic to contain taskid and the client-specific TaskDetails.
 
     """
