@@ -131,7 +131,7 @@ class TestTaskStatusDB:
         engine = sqla.create_engine("sqlite://")
         metadata = sqla.MetaData()
         kwargs = {fail_reason: True}
-        create_database(engine, metadata, **kwargs)
+        create_database(metadata, engine, **kwargs)
         with pytest.raises(RuntimeError, "not seem to be a task database"):
             TaskStatusDB(engine)
 
