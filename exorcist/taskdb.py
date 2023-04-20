@@ -1,10 +1,9 @@
 import sqlalchemy as sqla
-
-# remaining imports are for typing
-from typing import Optional, Iterable
-from .models import TaskStatus
-from os import PathLike
 import networkx as nx
+from .models import TaskStatus
+
+from typing import Optional, Iterable
+from os import PathLike
 
 
 class NoStatusChange(Exception):
@@ -144,15 +143,24 @@ class TaskStatusDB:
         task_data, deps = self._get_task_and_dep_data(taskid, requirements)
         self._insert_task_and_deps_data(task_data, deps)
 
-    def add_task_network(self, task_network: nx.DiGraph):
+    def add_task_network(self, taskid_network: nx.DiGraph):
         """Add a network of tasks to the database.
 
         Parameters
         ----------
-        task_network: nx.Digraph
-            A network with taskids (str) as nodes.
+        taskid_network: nx.Digraph
+            A network with taskids (str) as nodes. Edges in this graph
+            follow the direction of time/flow of information: from earlier
+            tasks to later tasks; from requirements to subsequent.
         """
-        ...
+        all_data = [
+            self._get_task_and_dep_data(node, taskid_network.pred[node])
+            for node in nx.topological_sort(taskid_network.nodes)
+        ]
+        tasklists, deplists = zip(*all_data)
+        tasks = sum(tasklists, [])
+        deps = sum(deplists, [])
+        self._insert_task_and_deps_data(tasks, deps)
 
     def update_task_status(
         self,
