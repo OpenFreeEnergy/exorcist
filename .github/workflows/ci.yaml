@@ -45,5 +45,6 @@ jobs:
                 && github.event_name != 'schedule' }}
         uses: codecov/codecov-action@v3
         with:
+          token: ${{ secrets.CODECOV_TOKEN }}
           file: coverage.xml
           verbose: true
