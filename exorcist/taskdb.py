@@ -116,18 +116,19 @@ class TaskStatusDB:
         }
 
         deps_data = [
-            {'from': req.taskid, 'to': task.taskid}
+            {'from': req, 'to': taskid}
             for req in requirements
         ]
         return [task_data], deps_data
 
-    def _insert_task_and_deps_data(task_data, deps_data):
+    def _insert_task_and_deps_data(self, task_data, deps_data):
         task_ins = sqla.insert(self.tasks_table).values(task_data)
         deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
 
         with self.engine.begin() as conn:
             res1 = conn.execute(task_ins)
-            res2 = conn.execute(deps_ins)
+            if deps_data:  # don't insert on empty deps
+                res2 = conn.execute(deps_ins)
 
     def add_task(self, taskid: str, requirements: Iterable[str]):
         """Add a task to the database.
