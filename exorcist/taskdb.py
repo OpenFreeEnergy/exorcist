@@ -2,7 +2,7 @@ import sqlalchemy as sqla
 
 # remaining imports are for typing
 from typing import Optional, Iterable
-from .models import TaskStatus, Task
+from .models import TaskStatus
 from os import PathLike
 import networkx as nx
 
@@ -106,18 +106,43 @@ class TaskStatusDB:
         # TODO: create indices that may be needed
         metadata.create_all(bind=engine)
 
-    def add_task(self, task: Task, requirements: Iterable[Task]):
+    @staticmethod
+    def _get_task_and_dep_data(taskid: str, requirements: Iterable[str]):
+        stat = TaskStatus.BLOCKED if requirements else TaskStatus.AVAILABLE
+        task_data = {
+            'taskid': taskid,
+            'status': stat.value,
+            'last_modified': None,
+            'tries': 0,
+        }
+
+        deps_data = [
+            {'from': req.taskid, 'to': task.taskid}
+            for req in requirements
+        ]
+        return [task_data], deps_data
+
+    def _insert_task_and_deps_data(task_data, deps_data):
+        task_ins = sqla.insert(self.tasks_table).values(task_data)
+        deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
+
+        with self.engine.begin() as conn:
+            res1 = conn.execute(task_ins)
+            res2 = conn.execute(deps_ins)
+
+    def add_task(self, taskid: str, requirements: Iterable[str]):
         """Add a task to the database.
 
         Parameters
         ----------
-        task: Task
+        taskid: str
             the task to add to the database
-        requirements: Iterable[Task]
-            tasks that directly block the task to be added (typically, whose
-            outputs are inputs to the task)
+        requirements: Iterable[str]
+            taskids that directly block the task to be added (typically,
+            whose outputs are inputs to the task)
         """
-        ...
+        task_data, deps = self._get_task_and_dep_data(taskid, requirements)
+        self._insert_task_and_deps_data(task_data, deps)
 
     def add_task_network(self, task_network: nx.DiGraph):
         """Add a network of tasks to the database.
@@ -125,7 +150,7 @@ class TaskStatusDB:
         Parameters
         ----------
         task_network: nx.Digraph
-            A network with :class:`.Task`\ s as nodes.
+            A network with taskids (str) as nodes.
         """
         ...
 
