@@ -82,14 +82,13 @@ class TestExampleResultStore:
 
 
 class TestExampleTaskDetailsStore:
-    def test_store_task_details(self, task_store, example_details):
+    def test_store_load_task_details_cycle(self, task_store,
+                                           example_details):
         task_store.store_task_details(example_details.label,
                                       example_details)
         path = task_store.directory / f"{example_details.label}.p"
         assert path.exists()
-        with open(path, mode='rb') as f:
-            reloaded = pickle.load(f)
-
+        reloaded = task_store.load_task_details(example_details.label)
         assert reloaded == example_details
 
     def test_run_task(self, task_store, example_details):
@@ -97,6 +96,17 @@ class TestExampleTaskDetailsStore:
         assert not result.is_failure
         assert result.main_result == 1.0
         assert result.label == "foo"
+
+    def test_run_task_failing_result(self, task_store):
+        details = ExampleTaskDetails(
+            label="baz",
+            input_result_labels={},
+            task_func=failure_func
+        )
+        result = task_store.run_task(details)
+        assert result.is_failure
+        assert result.main_result == "float division by zero"
+        assert result.label == "baz"
 
     def test_workflow(self, task_store, result_store, example_details):
         # depends on store_task_details working
