@@ -5,6 +5,11 @@ from .models import TaskStatus
 from typing import Optional, Iterable
 from os import PathLike
 
+def sqlite_fk_pragma(dbapi_conn, conn_record):
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
 
 class NoStatusChange(Exception):
     """Raised when an attempt to change task status does not change status.
@@ -28,6 +33,12 @@ class TaskStatusDB:
     """Database for managing execution and orchestration of tasks.
     """
     def __init__(self, engine: sqla.Engine):
+        if (
+            engine.name == "sqlite"
+            and not sqla.event.contains(engine, "connect", sqlite_fk_pragma)
+        ):
+            sqla.event.listen(engine, "connect", sqlite_fk_pragma)
+
         metadata = sqla.MetaData()
         metadata.reflect(engine)
         if self._is_empty_db(metadata):
@@ -68,6 +79,7 @@ class TaskStatusDB:
             generated internally.
         """
         engine = sqla.create_engine(f"sqlite:///{filename}", **kwargs)
+        sqla.event.listen(engine, "connect", sqlite_fk_pragma)
         if overwrite:
             metadata = sqla.MetaData()
             metadata.reflect(bind=engine)

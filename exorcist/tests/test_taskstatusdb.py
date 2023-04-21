@@ -199,8 +199,11 @@ class TestTaskStatusDB:
         assert set(deps) == {("foo", "bar")}
 
     def test_add_task_before_requirements(self, fresh_db):
-        # TODO: shouldn't this error because the FK doesn't exist?
-        fresh_db.add_task("bar", requirements=["foo"])
+        with pytest.raises(sqla.exc.IntegrityError, match="FOREIGN KEY"):
+            fresh_db.add_task("bar", requirements=["foo"])
+
+        # check that task insertion got rolled back
+        self.assert_is_fresh_db(fresh_db)
 
     def test_add_task_network(self, fresh_db, diamond_taskid_network):
         fresh_db.add_task_network(diamond_taskid_network)
