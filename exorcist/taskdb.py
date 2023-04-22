@@ -226,9 +226,31 @@ class TaskStatusDB:
         Update the database (including the DAG info) to show that the task
         has been completed.
         """
-        # TODO: This implementation is temporary. As a first draft, we're
-        # putting the logic in Python. One we have tests for this in place,
-        # we can come back and refactor to move more logic to SQL.
+        # TODO: This implementation is temporary.  One we have tests for
+        # this in place, we can come back and refactor to move more logic to
+        # SQL.
         self.update_task_status(completed_taskid, TaskStatus.COMPLETED,
                                 TaskStatus.IN_PROGRESS)
-        ...
+        with self.engine.begin() as conn:
+            # 1. UPDATE all dependency rows where from==taskid to mark these
+            #    as no longer blocking; RETURNING 'to'
+            # 2. QUERY to find which of the resulting tasks (resultid) have
+            #    no rows in dependencies where to==resultid and
+            #    blocking==True. These are the tasks that are now unblocked.
+            # 3. UPDATE tasks table to mark these tasks as available
+            ...
+
+    def update_dependencies_to_match_tasks(self):
+        """
+        """
+        # 1. UPDATE rows in dependencies where blocking==True and where the
+        #    taskid in 'from' is marked COMPLETED is task table so that they
+        #    are now blocking=False; RETURNING 'to'
+        # 2. QUERY to find which of the resulting tasks (resultid) have no
+        #    no rows in dependencies where to==resultid and
+        #    blocking==True. These are the tasks that are now unblocked.
+        # 3. UPDATE tasks table to mark these tasks as available
+
+        # NOTE: steps 2 and 3 are the same as above; step 1 is just the
+        # difference between doing this for all tasks and doing for one.
+        # Maybe this functions hsould be called from `mark_task_completed`?
