@@ -114,6 +114,7 @@ class TaskStatusDB:
             metadata,
             sqla.Column("from", sqla.String, sqla.ForeignKey("tasks.taskid")),
             sqla.Column("to", sqla.String, sqla.ForeignKey("tasks.taskid")),
+            sqla.Column("blocking", sqla.Boolean),
         )
         # TODO: create indices that may be needed
         metadata.create_all(bind=engine)
@@ -129,7 +130,7 @@ class TaskStatusDB:
         }
 
         deps_data = [
-            {'from': req, 'to': taskid}
+            {'from': req, 'to': taskid, 'blocking': True}
             for req in requirements
         ]
         return [task_data], deps_data
@@ -225,4 +226,9 @@ class TaskStatusDB:
         Update the database (including the DAG info) to show that the task
         has been completed.
         """
+        # TODO: This implementation is temporary. As a first draft, we're
+        # putting the logic in Python. One we have tests for this in place,
+        # we can come back and refactor to move more logic to SQL.
+        self.update_task_status(completed_taskid, TaskStatus.COMPLETED,
+                                TaskStatus.IN_PROGRESS)
         ...

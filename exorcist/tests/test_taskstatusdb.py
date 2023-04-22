@@ -21,6 +21,7 @@ def create_database(metadata, engine, extra_table=False,
     deps_columns = [
         sqla.Column("from", sqla.String, sqla.ForeignKey("tasks.taskid")),
         sqla.Column("to", sqla.String, sqla.ForeignKey("tasks.taskid")),
+        sqla.Column("blocking", sqla.Boolean),
     ]
 
     if missing_column:
@@ -47,7 +48,7 @@ def add_mock_data(metadata, engine):
         {'taskid': "bar", "status": TaskStatus.BLOCKED.value,
          'last_modified': None, 'tries': 0}
     ]
-    deps = [{'from': "foo", 'to': "bar"}]
+    deps = [{'from': "foo", 'to': "bar", 'blocking': True}]
 
     ins_tasks = sqla.insert(metadata.tables['tasks']).values(tasks)
     ins_deps = sqla.insert(metadata.tables['dependencies']).values(deps)
@@ -135,7 +136,7 @@ class TestTaskStatusDB:
 
             assert len(tasks) == 2
             assert len(deps) == 1
-            assert deps == {("foo", "bar")}
+            assert deps == {("foo", "bar", True)}
             assert tasks == {
                 ('foo', TaskStatus.AVAILABLE.value, None, 0),
                 ('bar', TaskStatus.BLOCKED.value, None, 0),
@@ -175,7 +176,7 @@ class TestTaskStatusDB:
     def test_dependencies_table(self, request, fixture):
         expected = {
             'fresh_db': set(),
-            'loaded_db': {("foo", "bar")},
+            'loaded_db': {("foo", "bar", True)},
         }[fixture]
         db = request.getfixturevalue(fixture)
         with db.engine.connect() as conn:
@@ -197,7 +198,7 @@ class TestTaskStatusDB:
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert set(tasks) == {expected_foo_task,
                               ("bar", TaskStatus.BLOCKED.value, None, 0)}
-        assert set(deps) == {("foo", "bar")}
+        assert set(deps) == {("foo", "bar", True)}
 
     def test_add_task_before_requirements(self, fresh_db):
         with pytest.raises(sqla.exc.IntegrityError, match="FOREIGN KEY"):
@@ -215,7 +216,8 @@ class TestTaskStatusDB:
             ("C", TaskStatus.BLOCKED.value, None, 0),
             ("D", TaskStatus.BLOCKED.value, None, 0),
         }
-        expected_deps = {("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")}
+        expected_deps = {("A", "B", True), ("A", "C", True),
+                         ("B", "D", True), ("C", "D", True)}
         assert set(tasks) == expected_tasks
         assert set(deps) == expected_deps
         assert len(tasks) == len(expected_tasks)
