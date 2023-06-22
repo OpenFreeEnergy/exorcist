@@ -1,3 +1,4 @@
+import abc
 import sqlalchemy as sqla
 
 # remaining imports are for typing
@@ -25,7 +26,25 @@ class NoStatusChange(Exception):
     """
 
 
-class TaskStatusDB:
+class AbstractTaskStatusDB(abc.ABCMeta):
+    @abc.abstractmethod
+    def add_task(self, taskid: str):
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def add_task_network(self, task_network: nx.DiGraph):
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def mark_task_completed(self, taskid: str, status: TaskStatus):
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def check_out_task(self):
+        raise NotImplementedError()
+
+
+class TaskStatusDB(AbstractTaskStatusDB):
     """Database for managing execution and orchestration of tasks.
     """
     def __init__(self, engine: sqla.Engine):
