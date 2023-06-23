@@ -27,6 +27,19 @@ class NoStatusChange(Exception):
 
 
 class AbstractTaskStatusDB(abc.ABCMeta):
+    def __init__(self):
+        self._current_task_tries = None
+
+    @property
+    def current_task_tries(self):
+        return self._current_task_tries
+
+    @current_task_tries.setter
+    def current_task_tries(self, value):
+        if value is not None and self._current_task_tries is not None:
+            raise ...
+        self._current_task_tries = value
+
     @abc.abstractmethod
     def add_task(self, taskid: str):
         raise NotImplementedError()
@@ -36,12 +49,31 @@ class AbstractTaskStatusDB(abc.ABCMeta):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def mark_task_completed(self, taskid: str, status: TaskStatus):
+    def _check_out_task(self) -> tuple[str, int]:
         raise NotImplementedError()
 
+    def check_out_task(self) -> str:
+        """...
+
+        This has the side effect of marking ``self.current_task_tries`` with
+        the number of tries for the task that has been checked out.
+        """
+        taskid, tries = self._check_out_task()
+        self.current_task_tries = tries
+        return taskid
+
     @abc.abstractmethod
-    def check_out_task(self):
+    def _mark_task_completed(self, taskid: str, success: bool)
         raise NotImplementedError()
+
+    def mark_task_completed(self, taskid: str, success: bool):
+        """...
+
+        This has the side effect that ``self.current_task_tries`` is set to
+        ``None``, indicating that no task is currently checked out.
+        """
+        self._mark_task_completed(taskid, success)
+        self.current_task_tries = None
 
 
 class TaskStatusDB(AbstractTaskStatusDB):
@@ -173,7 +205,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
         """
         ...
 
-    def mark_task_completed(self, completed_taskid: str):
+    def _mark_task_completed(self, completed_taskid: str):
         """
         Update the database (including the DAG info) to show that the task
         has been completed.
