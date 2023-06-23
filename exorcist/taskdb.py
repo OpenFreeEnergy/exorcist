@@ -26,7 +26,7 @@ class NoStatusChange(Exception):
     """
 
 
-class AbstractTaskStatusDB(abc.ABCMeta):
+class AbstractTaskStatusDB(abc.ABC):
     @abc.abstractmethod
     def add_task(self, taskid: str):
         raise NotImplementedError()
@@ -40,7 +40,7 @@ class AbstractTaskStatusDB(abc.ABCMeta):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def mark_task_completed(self, taskid: str, success: bool)
+    def mark_task_completed(self, taskid: str, success: bool):
         raise NotImplementedError()
 
 
@@ -115,6 +115,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             sqla.Column("status", sqla.Integer),
             sqla.Column("last_modified", sqla.DateTime),
             sqla.Column("tries", sqla.Integer),
+            sqla.Column("max_tries", sqla.Integer),
         )
         deps_table = sqla.Table(
             "dependencies",
@@ -173,7 +174,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
         """
         ...
 
-    def _mark_task_completed(self, completed_taskid: str):
+    def check_out_task(self):
+        ...
+
+    def mark_task_completed(self, completed_taskid: str):
         """
         Update the database (including the DAG info) to show that the task
         has been completed.

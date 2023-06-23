@@ -16,6 +16,7 @@ def create_database(metadata, engine, extra_table=False,
         sqla.Column("status", status_type),
         sqla.Column("last_modified", sqla.DateTime),
         sqla.Column("tries", sqla.Integer),
+        sqla.Column("max_tries", sqla.Integer),
     ]
     deps_columns = [
         sqla.Column("from", sqla.String, sqla.ForeignKey("tasks.taskid")),
@@ -42,9 +43,9 @@ def add_mock_data(metadata, engine):
     # existing file
     tasks = [
         {'taskid': "foo", "status": TaskStatus.AVAILABLE.value,
-         'last_modified': None, 'tries': 0},
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
         {'taskid': "bar", "status": TaskStatus.BLOCKED.value,
-         'last_modified': None, 'tries': 0}
+         'last_modified': None, 'tries': 0, 'max_tries': 3}
     ]
     deps = [{'from': "foo", 'to': "bar"}]
 
@@ -116,8 +117,8 @@ class TestTaskStatusDB:
             assert len(deps) == 1
             assert deps == {("foo", "bar")}
             assert tasks == {
-                ('foo', TaskStatus.AVAILABLE.value, None, 0),
-                ('bar', TaskStatus.BLOCKED.value, None, 0),
+                ('foo', TaskStatus.AVAILABLE.value, None, 0, 3),
+                ('bar', TaskStatus.BLOCKED.value, None, 0, 3),
             }
 
     # leaving this xfail for now because implementing the functionality
@@ -140,8 +141,8 @@ class TestTaskStatusDB:
     def test_tasks_table(self, request, fixture):
         expected = {
             'fresh_db': set(),
-            'loaded_db': {('foo', TaskStatus.AVAILABLE.value, None, 0),
-                          ('bar', TaskStatus.BLOCKED.value, None, 0)},
+            'loaded_db': {('foo', TaskStatus.AVAILABLE.value, None, 0, 3),
+                          ('bar', TaskStatus.BLOCKED.value, None, 0, 3)},
         }[fixture]
         db = request.getfixturevalue(fixture)
         with db.engine.connect() as conn:
