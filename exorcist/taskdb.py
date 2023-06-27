@@ -1,3 +1,4 @@
+import abc
 import sqlalchemy as sqla
 import networkx as nx
 from .models import TaskStatus
@@ -29,8 +30,85 @@ class NoStatusChange(Exception):
     """
 
 
-class TaskStatusDB:
+class AbstractTaskStatusDB(abc.ABC):
+    @abc.abstractmethod
+    def add_task(self, taskid: str, requirements: Iterable[str]):
+        """Add a task to the database.
+
+        Parameters
+        ----------
+        taskid: str
+            the taskid to add to the database
+        requirements: Iterable[str]
+            taskids that directly block the task to be added (typically,
+            whose outputs are inputs to the task)
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def add_task_network(self, task_network: nx.DiGraph):
+        """Add a network of tasks to the database.
+
+        Parameters
+        ----------
+        task_network: nx.Digraph
+            A network with taskid strings as nodes.
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def check_out_task(self) -> str:
+        """
+        Select a task to be run.
+
+        This should include any internal updates to the task status database
+        to indicate that the given task has been checked out by a worker.
+
+        Returns
+        -------
+        str :
+            The taskid of the task to run
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def mark_task_aborted_incomplete(self, taskid: str):
+        """
+        Update the database when a task fails to complete.
+
+        This may be caused by, e.g., a walltime limit being hit.
+
+        Parameters
+        ----------
+        taskid: str
+            the taskid of the failed task
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    def mark_task_completed(self, taskid: str, success: bool):
+        """
+        Update the database when a task has completed.
+
+        Parameters
+        ----------
+        taskid: str
+            the taskd of the completed task
+        success: bool
+            True if the task completed successfully, False if there was a
+            failure
+        """
+        raise NotImplementedError()
+
+
+class TaskStatusDB(AbstractTaskStatusDB):
     """Database for managing execution and orchestration of tasks.
+
+    This implementation is built on SQLAlchemy. For simple usage, the
+    recommendation is to use the :method:`.from_filename` method to create
+    this object, rather than its ``__init__``. The ``__init__`` method takes
+    a SQLAlchemy engine, which provides much more flexibility in choice of
+    backend.
     """
     def __init__(self, engine: sqla.Engine):
         if (
@@ -107,6 +185,7 @@ class TaskStatusDB:
             sqla.Column("status", sqla.Integer),
             sqla.Column("last_modified", sqla.DateTime),
             sqla.Column("tries", sqla.Integer),
+            sqla.Column("max_tries", sqla.Integer),
         )
         deps_table = sqla.Table(
             "dependencies",
@@ -114,7 +193,7 @@ class TaskStatusDB:
             sqla.Column("from", sqla.String, sqla.ForeignKey("tasks.taskid")),
             sqla.Column("to", sqla.String, sqla.ForeignKey("tasks.taskid")),
         )
-        # TODO: create indices that may be needed
+        # TODO: create indices that may be needed for performance
         metadata.create_all(bind=engine)
 
     @staticmethod
@@ -198,6 +277,12 @@ class TaskStatusDB:
             to change it to a status it already has), this is raised. This
             allows callers to catch and handle this case.
         """
+        ...
+
+    def check_out_task(self):
+        ...
+
+    def mark_task_aborted_incomplete(self, taskid: str):
         ...
 
     def mark_task_completed(self, completed_taskid: str):
