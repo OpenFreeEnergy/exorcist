@@ -368,16 +368,22 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def mark_task_aborted_incomplete(self, taskid: str):
         ...
 
-    def mark_task_completed(self, completed_taskid: str):
-        """
-        Update the database (including the DAG info) to show that the task
-        has been completed.
-        """
-        # TODO: This implementation is temporary.  One we have tests for
-        # this in place, we can come back and refactor to move more logic to
-        # SQL.
-        self.update_task_status(completed_taskid, TaskStatus.COMPLETED,
-                                TaskStatus.IN_PROGRESS)
+    def mark_task_completed(self, taskid: str):
+        update_task_completed = self._task_row_update_statement(
+            taskid,
+            status=TaskStatus.COMPLETED,
+            old_status=TaskStatus.IN_PROGRESS
+        )
+        update_deps = (
+            sqla.update(self.dependencies_table)
+            .where(self.dependencies_table.c.from == taskid)
+            .returning(self.dependencies_table.c.to)
+        )
+        update_task_unblocked = self._task_row_update_statement(
+            taskid=sqla.bindparam('taskid'),
+            status=TaskStatus.AVAILABLE,
+            old_status=TaskStatus.BLOCKED
+        )
         with self.engine.begin() as conn:
             # 1. UPDATE all dependency rows where from==taskid to mark these
             #    as no longer blocking; RETURNING 'to'
