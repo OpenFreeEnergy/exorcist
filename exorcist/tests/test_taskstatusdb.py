@@ -157,7 +157,6 @@ class TestTaskStatusDB:
         with pytest.raises(RuntimeError, "not seem to be a task database"):
             TaskStatusDB(engine)
 
-
     @pytest.mark.parametrize('fixture', ['fresh_db', 'loaded_db'])
     def test_tasks_table(self, request, fixture):
         expected = {
@@ -222,41 +221,68 @@ class TestTaskStatusDB:
         assert len(tasks) == len(expected_tasks)
         assert len(deps) == len(expected_deps)
 
-    @pytest.mark.parametrize('old_status', [None, TaskStatus.AVAILABLE])
-    def test_update_task_status(self, loaded_db, old_status):
-        before, _  = get_tasks_and_deps(loaded_db)
-        foo_before = {t.taskid: t for t in before}["foo"]
-        assert foo_before.status == TaskStatus.AVAILABLE.value
-        loaded_db.update_task_status(
-            taskid="foo",
-            status=TaskStatus.IN_PROGRESS,
-            old_status=old_status
-        )
-        after, _ = get_tasks_and_deps(loaded_db)
-        foo_after = {t.taskid: t for t in after}["foo"]
-        assert foo_after.status == TaskStatus.IN_PROGRESS.value
-        assert foo_after.last_modified is not None
+    def test_status_update_statement(self, loaded_db):
+        ...
 
-    def test_update_task_status_no_from_same_status(self, loaded_db):
-        # if you don't provide old_status, we always force an update; this
-        # means that if the status you have is the same as the new one, we
-        # see an update (because the timestamp has changed).
-        # I'm not 100% sure whether this is the behavior we want; it may
-        # need to change in the future.
-        before, _  = get_tasks_and_deps(loaded_db)
-        foo_before = {t.taskid: t for t in before}["foo"]
-        loaded_db.update_task_status(
-            taskid="foo",
-            status=TaskStatus.AVAILABLE
-        )
-        after, _ = get_tasks_and_deps(loaded_db)
-        foo_after = {t.taskid: t for t in after}["foo"]
-        assert foo_before.taskid == foo_after.taskid
-        assert foo_before.status == foo_after.status
-        assert foo_before.last_modified is None
-        assert foo_after.last_modified is not None
+    def test_check_out_task(self, loaded_db):
+        taskid = loaded_db.check_out_task()
+        assert taskid == "foo"
 
-    def test_update_task_status_from_wrong_status(self, loaded_db):
-        with pytest.raises(NoStatusChange):
-            loaded_db.update_task_status("foo", TaskStatus.COMPLETED,
-                                         TaskStatus.IN_PROGRESS)
+        tasks, deps = get_tasks_and_deps(loaded_db)
+        taskdict = {t[0]: t for t in tasks}
+        foo = taskdict["foo"]
+        bar = taskdict["bar"]
+        assert foo.taskid == "foo"
+        assert foo.status == TaskStatus.IN_PROGRESS.value
+        assert foo.tries == 1
+        assert foo.max_tries == 3
+
+        assert bar == ("bar", TaskStatus.BLOCKED.value, None, 0, 3)
+
+    def test_check_out_task_empty_db(self, fresh_db):
+        assert fresh_db.check_out_task() is None
+
+    def test_check_out_task_no_available(self, loaded_db):
+        ...
+
+    # keeping this around in comment during early dev stage so I can refer
+    # to how I did this at first; remove once we have a working setup
+    #
+    # @pytest.mark.parametrize('old_status', [None, TaskStatus.AVAILABLE])
+    # def test_update_task_status(self, loaded_db, old_status):
+    #     before, _  = get_tasks_and_deps(loaded_db)
+    #     foo_before = {t.taskid: t for t in before}["foo"]
+    #     assert foo_before.status == TaskStatus.AVAILABLE.value
+    #     loaded_db.update_task_status(
+    #         taskid="foo",
+    #         status=TaskStatus.IN_PROGRESS,
+    #         old_status=old_status
+    #     )
+    #     after, _ = get_tasks_and_deps(loaded_db)
+    #     foo_after = {t.taskid: t for t in after}["foo"]
+    #     assert foo_after.status == TaskStatus.IN_PROGRESS.value
+    #     assert foo_after.last_modified is not None
+    #
+    # def test_update_task_status_no_from_same_status(self, loaded_db):
+    #     # if you don't provide old_status, we always force an update; this
+    #     # means that if the status you have is the same as the new one, we
+    #     # see an update (because the timestamp has changed).
+    #     # I'm not 100% sure whether this is the behavior we want; it may
+    #     # need to change in the future.
+    #     before, _  = get_tasks_and_deps(loaded_db)
+    #     foo_before = {t.taskid: t for t in before}["foo"]
+    #     loaded_db.update_task_status(
+    #         taskid="foo",
+    #         status=TaskStatus.AVAILABLE
+    #     )
+    #     after, _ = get_tasks_and_deps(loaded_db)
+    #     foo_after = {t.taskid: t for t in after}["foo"]
+    #     assert foo_before.taskid == foo_after.taskid
+    #     assert foo_before.status == foo_after.status
+    #     assert foo_before.last_modified is None
+    #     assert foo_after.last_modified is not None
+    #
+    # def test_update_task_status_from_wrong_status(self, loaded_db):
+    #     with pytest.raises(NoStatusChange):
+    #         loaded_db.update_task_status("foo", TaskStatus.COMPLETED,
+    #                                      TaskStatus.IN_PROGRESS)

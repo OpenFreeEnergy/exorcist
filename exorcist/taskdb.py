@@ -4,8 +4,12 @@ import networkx as nx
 from .models import TaskStatus
 from datetime import datetime
 
+# imports for typing
 from typing import Optional, Iterable
 from os import PathLike
+from sqlalchemy.sql.roles import StatementRole as SQLStatement
+
+_SENTINEL = object()
 
 def sqlite_fk_pragma(dbapi_conn, conn_record):
     cursor = dbapi_conn.cursor()
@@ -58,7 +62,7 @@ class AbstractTaskStatusDB(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def check_out_task(self) -> str:
+    def check_out_task(self) -> str | None:
         """
         Select a task to be run.
 
@@ -67,8 +71,9 @@ class AbstractTaskStatusDB(abc.ABC):
 
         Returns
         -------
-        str :
-            The taskid of the task to run
+        str | None :
+            The taskid of the task to run; None if there are no available
+            tasks
         """
         raise NotImplementedError()
 
@@ -255,12 +260,15 @@ class TaskStatusDB(AbstractTaskStatusDB):
         deps = sum(deplists, [])
         self._insert_task_and_deps_data(tasks, deps)
 
-    def update_task_status(
+    def _task_row_update_statement(
         self,
         taskid: str,
         status: TaskStatus,
-        old_status: Optional[TaskStatus] = None
-    ):
+        *,
+        is_checkout: bool = False,
+        max_tries: Optional[int] = None,
+        old_status: Optional[TaskStatus] = None,
+    ) -> SQLStatement:
         """
         Parameters
         ----------
@@ -270,28 +278,55 @@ class TaskStatusDB(AbstractTaskStatusDB):
             the status to change to
         old_status: TaskStatus
             the previous status
+        last_modified
 
-        Raises
-        ------
-        NoStatusChange :
-            If no task matched the criteria (``taskid`` and, if given,
-            ``old_status``) this error is raised. This allows callers to
-            handle this when possible (e.g., to retry with a different task)
+        Returns
+        -------
+        SQLStatement :
+            The statement to be executed to update this task row. This
+            statement will return the rows that have been changed by the
+            update.
+
+        See also
+        --------
+        _validate_update_result : validate result from statement's execution
         """
         stmt = (
             sqla.update(self.tasks_table)
             .where(self.tasks_table.c.taskid == taskid)
         )
+
         if old_status is not None:
             stmt = stmt.where(self.tasks_table.c.status == old_status.value)
 
-        stmt = stmt.values(status=status.value, last_modified=datetime.now())
-        # TODO: consider whether we either want to (a) optionally pass a
-        # connection here; (b) have a function that just returns the stmt
-        # and have it used elsewhere
-        with self.engine.begin() as conn:
-            result = conn.execute(stmt)
+        # create a dict of values to update
+        values = {
+            'status': status.value,
+            'last_modified': datetime.now(),
+        }
+        if is_checkout:
+            values['tries'] = self.tasks_table.c.tries + 1
+        if max_tries is not None:
+            values['max_tries'] = max_tries
 
+        stmt = stmt.values(**values)
+        return stmt
+
+    @staticmethod
+    def _validate_update_result(result):
+        """The result of an update statement should only have 1 changed row.
+
+        This gives standard validation to raise errors if things went wrong.
+
+        Raises
+        ------
+        RuntimeError
+            Something went really wrong; you appear to have duplicate taskid
+            rows. This should never occur.
+        NoStatusChange
+            The update couldn't happen. This likely means that the database
+            allowed another process to mark the task as the updated status.
+        """
         if result.rowcount > 1: # -no-cov-
             raise RuntimeError("Database seems to have more than 1 row with"
                                f"taskid '{taskid}'. This should not happen.")
@@ -300,14 +335,37 @@ class TaskStatusDB(AbstractTaskStatusDB):
                                  f"{old_status} to {status}")
 
     def check_out_task(self):
-        ...
+        # TODO: may need move this to a single attempt function and wrap it
+        # in while loop to catch NoStatusChange errors until we have a
+        # successful checkout
+
+        # TODO: separate selection so subclasses can easily override;
+        # something like `_select_task(conn: Connection) -> Row` (allow us
+        # to do something smarter than "take the first available")
+        sel_stmt = (
+            sqla.select(self.tasks_table)
+            .where(self.tasks_table.c.status == TaskStatus.AVAILABLE.value)
+        )
+        with self.engine.begin() as conn:
+            task_row = conn.execute(sel_stmt).first()
+
+            if task_row is None:
+                # no tasks are available
+                return None
+
+            update_stmt = self._task_row_update_statement(
+                task_row.taskid,
+                status=TaskStatus.IN_PROGRESS,
+                is_checkout=True
+            )
+            result = conn.execute(update_stmt)
+
+        self._validate_update_result(result)
+
+        return task_row.taskid
 
     def mark_task_aborted_incomplete(self, taskid: str):
         ...
 
     def mark_task_completed(self, completed_taskid: str):
-        """
-        Update the database (including the DAG info) to show that the task
-        has been completed.
-        """
         ...
