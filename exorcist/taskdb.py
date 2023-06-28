@@ -32,7 +32,8 @@ class NoStatusChange(Exception):
 
 class AbstractTaskStatusDB(abc.ABC):
     @abc.abstractmethod
-    def add_task(self, taskid: str, requirements: Iterable[str]):
+    def add_task(self, taskid: str, requirements: Iterable[str],
+                 max_tries: int):
         """Add a task to the database.
 
         Parameters
@@ -46,7 +47,7 @@ class AbstractTaskStatusDB(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def add_task_network(self, task_network: nx.DiGraph):
+    def add_task_network(self, task_network: nx.DiGraph, max_tries: int):
         """Add a network of tasks to the database.
 
         Parameters
@@ -197,13 +198,15 @@ class TaskStatusDB(AbstractTaskStatusDB):
         metadata.create_all(bind=engine)
 
     @staticmethod
-    def _get_task_and_dep_data(taskid: str, requirements: Iterable[str]):
+    def _get_task_and_dep_data(taskid: str, requirements: Iterable[str],
+                               max_tries: int):
         stat = TaskStatus.BLOCKED if requirements else TaskStatus.AVAILABLE
         task_data = {
             'taskid': taskid,
             'status': stat.value,
             'last_modified': None,
             'tries': 0,
+            'max_tries': max_tries
         }
 
         deps_data = [
@@ -221,7 +224,8 @@ class TaskStatusDB(AbstractTaskStatusDB):
             if deps_data:  # don't insert on empty deps
                 res2 = conn.execute(deps_ins)
 
-    def add_task(self, taskid: str, requirements: Iterable[str]):
+    def add_task(self, taskid: str, requirements: Iterable[str],
+                 max_tries: int):
         """Add a task to the database.
 
         Parameters
@@ -232,10 +236,11 @@ class TaskStatusDB(AbstractTaskStatusDB):
             taskids that directly block the task to be added (typically,
             whose outputs are inputs to the task)
         """
-        task_data, deps = self._get_task_and_dep_data(taskid, requirements)
+        task_data, deps = self._get_task_and_dep_data(taskid, requirements,
+                                                      max_tries)
         self._insert_task_and_deps_data(task_data, deps)
 
-    def add_task_network(self, taskid_network: nx.DiGraph):
+    def add_task_network(self, taskid_network: nx.DiGraph, max_tries: int):
         """Add a network of tasks to the database.
 
         Parameters
@@ -246,7 +251,8 @@ class TaskStatusDB(AbstractTaskStatusDB):
             tasks to later tasks; from requirements to subsequent.
         """
         all_data = [
-            self._get_task_and_dep_data(node, taskid_network.pred[node])
+            self._get_task_and_dep_data(node, taskid_network.pred[node],
+                                        max_tries)
             for node in nx.topological_sort(taskid_network)
         ]
         tasklists, deplists = zip(*all_data)
