@@ -61,7 +61,8 @@ def add_mock_data(metadata, engine):
 
 @pytest.fixture
 def fresh_db():
-    return TaskStatusDB(sqla.create_engine("sqlite://"))
+    echo = False  # switch this for debugging
+    return TaskStatusDB(sqla.create_engine("sqlite://", echo=echo))
 
 @pytest.fixture
 def loaded_db(fresh_db):
@@ -220,3 +221,42 @@ class TestTaskStatusDB:
         assert set(deps) == expected_deps
         assert len(tasks) == len(expected_tasks)
         assert len(deps) == len(expected_deps)
+
+    @pytest.mark.parametrize('old_status', [None, TaskStatus.AVAILABLE])
+    def test_update_task_status(self, loaded_db, old_status):
+        before, _  = get_tasks_and_deps(loaded_db)
+        foo_before = {t.taskid: t for t in before}["foo"]
+        assert foo_before.status == TaskStatus.AVAILABLE.value
+        loaded_db.update_task_status(
+            taskid="foo",
+            status=TaskStatus.IN_PROGRESS,
+            old_status=old_status
+        )
+        after, _ = get_tasks_and_deps(loaded_db)
+        foo_after = {t.taskid: t for t in after}["foo"]
+        assert foo_after.status == TaskStatus.IN_PROGRESS.value
+        assert foo_after.last_modified is not None
+
+    def test_update_task_status_no_from_same_status(self, loaded_db):
+        # if you don't provide old_status, we always force an update; this
+        # means that if the status you have is the same as the new one, we
+        # see an update (because the timestamp has changed).
+        # I'm not 100% sure whether this is the behavior we want; it may
+        # need to change in the future.
+        before, _  = get_tasks_and_deps(loaded_db)
+        foo_before = {t.taskid: t for t in before}["foo"]
+        loaded_db.update_task_status(
+            taskid="foo",
+            status=TaskStatus.AVAILABLE
+        )
+        after, _ = get_tasks_and_deps(loaded_db)
+        foo_after = {t.taskid: t for t in after}["foo"]
+        assert foo_before.taskid == foo_after.taskid
+        assert foo_before.status == foo_after.status
+        assert foo_before.last_modified is None
+        assert foo_after.last_modified is not None
+
+    def test_update_task_status_from_wrong_status(self, loaded_db):
+        with pytest.raises(NoStatusChange):
+            loaded_db.update_task_status("foo", TaskStatus.COMPLETED,
+                                         TaskStatus.IN_PROGRESS)

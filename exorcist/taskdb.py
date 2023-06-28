@@ -2,6 +2,7 @@ import abc
 import sqlalchemy as sqla
 import networkx as nx
 from .models import TaskStatus
+from datetime import datetime
 
 from typing import Optional, Iterable
 from os import PathLike
@@ -273,11 +274,30 @@ class TaskStatusDB(AbstractTaskStatusDB):
         Raises
         ------
         NoStatusChange :
-            If the status does not actually change (e.g., the code is trying
-            to change it to a status it already has), this is raised. This
-            allows callers to catch and handle this case.
+            If no task matched the criteria (``taskid`` and, if given,
+            ``old_status``) this error is raised. This allows callers to
+            handle this when possible (e.g., to retry with a different task)
         """
-        ...
+        stmt = (
+            sqla.update(self.tasks_table)
+            .where(self.tasks_table.c.taskid == taskid)
+        )
+        if old_status is not None:
+            stmt = stmt.where(self.tasks_table.c.status == old_status.value)
+
+        stmt = stmt.values(status=status.value, last_modified=datetime.now())
+        # TODO: consider whether we either want to (a) optionally pass a
+        # connection here; (b) have a function that just returns the stmt
+        # and have it used elsewhere
+        with self.engine.begin() as conn:
+            result = conn.execute(stmt)
+
+        if result.rowcount > 1: # -no-cov-
+            raise RuntimeError("Database seems to have more than 1 row with"
+                               f"taskid '{taskid}'. This should not happen.")
+        elif result.rowcount == 0:
+            raise NoStatusChange(f"Task '{taskid}' could not change from "
+                                 f"{old_status} to {status}")
 
     def check_out_task(self):
         ...
