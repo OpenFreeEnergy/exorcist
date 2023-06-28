@@ -186,34 +186,34 @@ class TestTaskStatusDB:
 
     def test_add_task(self, fresh_db):
         # task without prerequisites
-        fresh_db.add_task("foo", requirements=[])
-        expected_foo_task = ("foo", TaskStatus.AVAILABLE.value, None, 0)
+        fresh_db.add_task("foo", requirements=[], max_tries=3)
+        expected_foo_task = ("foo", TaskStatus.AVAILABLE.value, None, 0, 3)
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert set(tasks) == {expected_foo_task}
         assert set(deps) == set()
 
         # task with prerequisites
-        fresh_db.add_task("bar", requirements=['foo'])
+        fresh_db.add_task("bar", requirements=['foo'], max_tries=3)
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert set(tasks) == {expected_foo_task,
-                              ("bar", TaskStatus.BLOCKED.value, None, 0)}
+                              ("bar", TaskStatus.BLOCKED.value, None, 0, 3)}
         assert set(deps) == {("foo", "bar")}
 
     def test_add_task_before_requirements(self, fresh_db):
         with pytest.raises(sqla.exc.IntegrityError, match="FOREIGN KEY"):
-            fresh_db.add_task("bar", requirements=["foo"])
+            fresh_db.add_task("bar", requirements=["foo"], max_tries=3)
 
         # check that task insertion got rolled back
         self.assert_is_fresh_db(fresh_db)
 
     def test_add_task_network(self, fresh_db, diamond_taskid_network):
-        fresh_db.add_task_network(diamond_taskid_network)
+        fresh_db.add_task_network(diamond_taskid_network, max_tries=3)
         tasks, deps = get_tasks_and_deps(fresh_db)
         expected_tasks = {
-            ("A", TaskStatus.AVAILABLE.value, None, 0),
-            ("B", TaskStatus.BLOCKED.value, None, 0),
-            ("C", TaskStatus.BLOCKED.value, None, 0),
-            ("D", TaskStatus.BLOCKED.value, None, 0),
+            ("A", TaskStatus.AVAILABLE.value, None, 0, 3),
+            ("B", TaskStatus.BLOCKED.value, None, 0, 3),
+            ("C", TaskStatus.BLOCKED.value, None, 0, 3),
+            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
         }
         expected_deps = {("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")}
         assert set(tasks) == expected_tasks
