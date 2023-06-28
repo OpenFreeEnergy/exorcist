@@ -374,30 +374,58 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def mark_task_aborted_incomplete(self, taskid: str):
         ...
 
-    def mark_task_completed(self, taskid: str):
+    def _mark_task_completed_failure(self, taskid: str):
+        update_task_finished_fail = self._task_row_update_statement(
+            taskid,
+            status=TaskStatus.AVAILABLE,
+            old_status=TaskStatus.IN_PROGRESS
+        )
+        with self.engine.begin() as conn:
+            result = conn.execute(update_task_finished_fail)
+            self._validate_update_result(result)
+
+
+    def _mark_task_completed_success(self, taskid: str):
+        # 1. UPDATE the task status as completed
         update_task_completed = self._task_row_update_statement(
             taskid,
             status=TaskStatus.COMPLETED,
             old_status=TaskStatus.IN_PROGRESS
         )
+        # 2. UPDATE all dependency rows where from==taskid to mark these as
+        #    no longer blocking; RETURNING 'to'
         update_deps = (
             sqla.update(self.dependencies_table)
-            .where(self.dependencies_table.c.from == taskid)
+            .where(getattr(self.dependencies_table.c, "from") == taskid)
+            .values(blocking=False)
             .returning(self.dependencies_table.c.to)
         )
+        # 2. SELECT the resulting tasks (resultid) have no
+        #    rows in dependencies where to==resultid and blocking==True.
+        #    These are the tasks that are now unblocked.
+        select_unblocked = (
+        )
+        # 3. UPDATE tasks table to mark these tasks as available
         update_task_unblocked = self._task_row_update_statement(
             taskid=sqla.bindparam('taskid'),
             status=TaskStatus.AVAILABLE,
             old_status=TaskStatus.BLOCKED
         )
         with self.engine.begin() as conn:
-            # 1. UPDATE all dependency rows where from==taskid to mark these
-            #    as no longer blocking; RETURNING 'to'
-            # 2. QUERY to find which of the resulting tasks (resultid) have
-            #    no rows in dependencies where to==resultid and
-            #    blocking==True. These are the tasks that are now unblocked.
-            # 3. UPDATE tasks table to mark these tasks as available
-            ...
+            completed_task = conn.execute(update_task_completed)
+            possibly_unblocked = conn.execute(update_deps)
+            now_unblocked = conn.execute(query_unblocked, [
+                {'taskid': t} for t in possibly_unblocked
+            ])
+            unblocked = conn.execute(update_task_unblocked, [
+                {'taskid': t} for t in now_unblocked
+            ])
+
+    def mark_task_completed(self, taskid: str, success: bool):
+        if success:
+            return self._mark_task_completed_success(taskid)
+        else:
+            return self._mark_task_completed_failure(taskid)
 
     def update_dependencies_to_match_tasks(self):
         """
