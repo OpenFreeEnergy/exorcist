@@ -3,7 +3,7 @@ import sqlalchemy as sqla
 
 # remaining imports are for typing
 from typing import Optional, Iterable
-from .models import TaskStatus, Task
+from .models import TaskStatus
 from os import PathLike
 import networkx as nx
 
@@ -67,19 +67,22 @@ class AbstractTaskStatusDB(abc.ABC):
         """
         raise NotImplementedError()
 
-    @abc.abstractmethod
-    def mark_task_aborted_incomplete(self, taskid: str):
-        """
-        Update the database when a task fails to complete.
+    # we're probably going to want something like this in the future to
+    # distinguish between failures in the execution system and failures
+    # during a task
+    # @abc.abstractmethod
+    # def mark_task_aborted_incomplete(self, taskid: str):
+    #     """
+    #     Update the database when a task fails to complete.
 
-        This may be caused by, e.g., a walltime limit being hit.
+    #     This may be caused by, e.g., a walltime limit being hit.
 
-        Parameters
-        ----------
-        taskid: str
-            the taskid of the failed task
-        """
-        raise NotImplementedError()
+    #     Parameters
+    #     ----------
+    #     taskid: str
+    #         the taskid of the failed task
+    #     """
+    #     raise NotImplementedError()
 
     @abc.abstractmethod
     def mark_task_completed(self, taskid: str, success: bool):
@@ -191,7 +194,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
         # TODO: create indices that may be needed for performance
         metadata.create_all(bind=engine)
 
-    def add_task(self, task: Task, requirements: Iterable[Task]):
+    def add_task(self, taskid: str, requirements: Iterable[str]):
         ...
 
     def add_task_network(self, task_network: nx.DiGraph):
@@ -223,9 +226,6 @@ class TaskStatusDB(AbstractTaskStatusDB):
         ...
 
     def check_out_task(self):
-        ...
-
-    def mark_task_aborted_incomplete(self, taskid: str):
         ...
 
     def mark_task_completed(self, completed_taskid: str):
