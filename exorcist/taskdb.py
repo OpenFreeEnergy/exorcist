@@ -396,6 +396,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
 
     def _mark_task_completed_success(self, taskid: str):
+        # conveniences (esp since from is a reserved word)
+        from_col = getattr(self.dependencies_table.c, "from")
+        to_col = self.dependencies_table.c.to
+
         # 1. UPDATE the task status as completed
         update_task_completed = self._task_row_update_statement(
             taskid,
@@ -407,15 +411,19 @@ class TaskStatusDB(AbstractTaskStatusDB):
         #    no longer blocking; RETURNING 'to'
         update_deps = (
             sqla.update(self.dependencies_table)
-            .where(getattr(self.dependencies_table.c, "from") == taskid)
+            .where(from_col == taskid)
             .values(blocking=False)
-            .returning(self.dependencies_table.c.to)
+            .returning(to_col)
         )
 
         # 3. SELECT the resulting tasks (resultid) have no
         #    rows in dependencies where to==resultid and blocking==True.
         #    These are the tasks that are now unblocked.
+        # TODO: this is incomplete
         select_unblocked = (
+            sqla.select(self.dependencies_table)
+            .where(to_col == sqla.bindparam("taskid")
+                   and self.dependencies.c.blocking == True)
         )
 
         # 4. UPDATE tasks table to mark these tasks as available
@@ -428,11 +436,11 @@ class TaskStatusDB(AbstractTaskStatusDB):
         with self.engine.begin() as conn:
             completed_task = conn.execute(update_task_completed)
             possibly_unblocked = conn.execute(update_deps)
-            now_unblocked = conn.execute(query_unblocked, [
+            to_unblock = conn.execute(query_unblocked, [
                 {'taskid': t} for t in possibly_unblocked
             ])
             unblocked = conn.execute(update_task_unblocked, [
-                {'taskid': t} for t in now_unblocked
+                {'taskid': t} for t in to_unblock
             ])
 
     def mark_task_completed(self, taskid: str, success: bool):
@@ -441,9 +449,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
         else:
             return self._mark_task_completed_failure(taskid)
 
-    def update_dependencies_to_match_tasks(self):
-        """
-        """
+    # TODO: add a method that forces consistency between task table's status
+    # and the dependencies table (no completed task should be blocking
+    # anything)
+    # def update_dependencies_to_match_tasks(self):
         # 1. UPDATE rows in dependencies where blocking==True and where the
         #    taskid in 'from' is marked COMPLETED is task table so that they
         #    are now blocking=False; RETURNING 'to'
