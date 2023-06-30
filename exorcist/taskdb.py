@@ -132,8 +132,12 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def dependencies_table(self):
         return self.metadata.tables['dependencies']
 
-    def get_all_tasks(self):
-        """Yield current status for all tasks
+    def get_all_tasks(self) -> Iterable[sqla.Row]:
+        """Yield current row for all tasks.
+
+        This is mainly intended for debug and development usage; a more
+        standardized variant will likely become part of the main API when we
+        want dashboards, etc.
         """
         with self.engine.connect() as conn:
             yield from conn.execute(sqla.select(self.tasks_table)).all()
