@@ -129,6 +129,12 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def dependencies_table(self):
         return self.metadata.tables['dependencies']
 
+    def get_all_tasks(self):
+        """Yield current status for all tasks
+        """
+        with self.engine.connect() as conn:
+            yield from conn.execute(sqla.select(self.tasks_table)).all()
+
     @classmethod
     def from_filename(cls, filename: PathLike, *, overwrite: bool = False,
                     **kwargs):
