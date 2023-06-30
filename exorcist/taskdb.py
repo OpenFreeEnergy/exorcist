@@ -270,7 +270,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def _task_row_update_statement(
         self,
         taskid: str,
-        status: TaskStatus,
+        status: TaskStatus | SQLStatement,
         *,
         is_checkout: bool = False,
         max_tries: Optional[int] = None,
@@ -303,12 +303,15 @@ class TaskStatusDB(AbstractTaskStatusDB):
             .where(self.tasks_table.c.taskid == taskid)
         )
 
+        if isinstance(status, TaskStatus):
+            status = status.value
+
         if old_status is not None:
             stmt = stmt.where(self.tasks_table.c.status == old_status.value)
 
         # create a dict of values to update
         values = {
-            'status': status.value,
+            'status': status,
             'last_modified': datetime.now(),
         }
         if is_checkout:
@@ -375,9 +378,16 @@ class TaskStatusDB(AbstractTaskStatusDB):
         ...
 
     def _mark_task_completed_failure(self, taskid: str):
+        status_statement = sqla.case(
+            (
+                self.tasks_table.c.tries == self.tasks_table.c.max_tries,
+                TaskStatus.TOO_MANY_RETRIES.value
+            ),
+            else_=TaskStatus.AVAILABLE.value
+        )
         update_task_finished_fail = self._task_row_update_statement(
             taskid,
-            status=TaskStatus.AVAILABLE,
+            status=status_statement,
             old_status=TaskStatus.IN_PROGRESS
         )
         with self.engine.begin() as conn:
@@ -392,6 +402,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             status=TaskStatus.COMPLETED,
             old_status=TaskStatus.IN_PROGRESS
         )
+
         # 2. UPDATE all dependency rows where from==taskid to mark these as
         #    no longer blocking; RETURNING 'to'
         update_deps = (
@@ -400,17 +411,20 @@ class TaskStatusDB(AbstractTaskStatusDB):
             .values(blocking=False)
             .returning(self.dependencies_table.c.to)
         )
-        # 2. SELECT the resulting tasks (resultid) have no
+
+        # 3. SELECT the resulting tasks (resultid) have no
         #    rows in dependencies where to==resultid and blocking==True.
         #    These are the tasks that are now unblocked.
         select_unblocked = (
         )
-        # 3. UPDATE tasks table to mark these tasks as available
+
+        # 4. UPDATE tasks table to mark these tasks as available
         update_task_unblocked = self._task_row_update_statement(
             taskid=sqla.bindparam('taskid'),
             status=TaskStatus.AVAILABLE,
             old_status=TaskStatus.BLOCKED
         )
+
         with self.engine.begin() as conn:
             completed_task = conn.execute(update_task_completed)
             possibly_unblocked = conn.execute(update_deps)

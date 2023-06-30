@@ -1,8 +1,10 @@
 import pytest
+from unittest import mock
 from exorcist import TaskStatusDB, NoStatusChange, TaskStatus
 
 import sqlalchemy as sqla
 import networkx as nx
+from datetime import datetime
 
 def create_database(metadata, engine, extra_table=False,
                     missing_table=False, extra_column=False,
@@ -40,12 +42,12 @@ def create_database(metadata, engine, extra_table=False,
 
     metadata.create_all(bind=engine)
 
-def add_mock_data(metadata, engine):
+def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE):
     # add a couple of tasks for when we want to pretend we're opening an
     # existing file
     tasks = [
-        {'taskid': "foo", "status": TaskStatus.AVAILABLE.value,
-         'last_modified': None, 'tries': 0, 'max_tries': 3},
+        {'taskid': "foo", "status": status.value,
+         'last_modified': None, 'tries': tries, 'max_tries': 3},
         {'taskid': "bar", "status": TaskStatus.BLOCKED.value,
          'last_modified': None, 'tries': 0, 'max_tries': 3}
     ]
@@ -59,6 +61,14 @@ def add_mock_data(metadata, engine):
         res2 = conn.execute(ins_deps)
         conn.commit()
 
+_DEFAULT_DATETIME = datetime(1970, 1, 1)
+
+def patch_datetime_now():
+    # turns out we can't patch just the now() method (datetime is immutable,
+    # probably C code?) so we have to patch the entire datetime module
+    loc = "exorcist.taskdb.datetime"
+    datetime_now = mock.Mock(now=mock.Mock(return_value=_DEFAULT_DATETIME))
+    return mock.patch(loc, datetime_now)
 
 @pytest.fixture
 def fresh_db():
@@ -245,6 +255,58 @@ class TestTaskStatusDB:
         assert fresh_db.check_out_task() is None
 
     def test_check_out_task_no_available(self, loaded_db):
+        ...
+
+    def test_mark_task_completed_failure_retry(self, fresh_db):
+        add_mock_data(fresh_db.metadata, fresh_db.engine, tries=1,
+                      status=TaskStatus.IN_PROGRESS)
+        # assert that our initial conditions are as expected
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("foo", TaskStatus.IN_PROGRESS.value, None, 1, 3),
+            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("foo", "bar", True)}
+
+        with patch_datetime_now():
+            fresh_db.mark_task_completed("foo", success=False)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("foo", TaskStatus.AVAILABLE.value, _DEFAULT_DATETIME, 1, 3),
+            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("foo", "bar", True)}
+
+    def test_mark_task_completed_failure_max_tries(self, fresh_db):
+        add_mock_data(fresh_db.metadata, fresh_db.engine, tries=3,
+                      status=TaskStatus.IN_PROGRESS)
+        # assert that our initial conditions are as expected
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("foo", TaskStatus.IN_PROGRESS.value, None, 3, 3),
+            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("foo", "bar", True)}
+
+        with patch_datetime_now():
+            fresh_db.mark_task_completed("foo", success=False)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("foo", TaskStatus.TOO_MANY_RETRIES.value, _DEFAULT_DATETIME,
+             3, 3),
+            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("foo", "bar", True)}
+
+    def test_mark_task_completed_success(self, loaded_db):
+        ...
+
+    def test_mark_task_completed_success_sequence(
+        self,
+        diamond_taskid_network
+    ):
         ...
 
     # keeping this around in comment during early dev stage so I can refer
