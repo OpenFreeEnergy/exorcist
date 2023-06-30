@@ -435,12 +435,12 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         with self.engine.begin() as conn:
             completed_task = conn.execute(update_task_completed)
-            possibly_unblocked = conn.execute(update_deps)
+            possibly_unblocked = conn.execute(update_deps).fetchall()
             to_unblock = conn.execute(query_unblocked, [
-                {'taskid': t} for t in possibly_unblocked
+                {'taskid': t[0]} for t in possibly_unblocked
             ])
             unblocked = conn.execute(update_task_unblocked, [
-                {'taskid': t} for t in to_unblock
+                {'taskid': t[0]} for t in to_unblock
             ])
 
     def mark_task_completed(self, taskid: str, success: bool):
