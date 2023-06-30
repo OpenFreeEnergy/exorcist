@@ -255,7 +255,9 @@ class TestTaskStatusDB:
         assert fresh_db.check_out_task() is None
 
     def test_check_out_task_no_available(self, loaded_db):
-        ...
+        add_mock_data(fresh_db.metadata, fresh_db.engine, tries=1,
+                      status=TaskStatus.IN_PROGRESS)
+        assert fresh_db.check_out_task() is None
 
     def test_mark_task_completed_failure_retry(self, fresh_db):
         add_mock_data(fresh_db.metadata, fresh_db.engine, tries=1,
@@ -308,45 +310,3 @@ class TestTaskStatusDB:
         diamond_taskid_network
     ):
         ...
-
-    # keeping this around in comment during early dev stage so I can refer
-    # to how I did this at first; remove once we have a working setup
-    #
-    # @pytest.mark.parametrize('old_status', [None, TaskStatus.AVAILABLE])
-    # def test_update_task_status(self, loaded_db, old_status):
-    #     before, _  = get_tasks_and_deps(loaded_db)
-    #     foo_before = {t.taskid: t for t in before}["foo"]
-    #     assert foo_before.status == TaskStatus.AVAILABLE.value
-    #     loaded_db.update_task_status(
-    #         taskid="foo",
-    #         status=TaskStatus.IN_PROGRESS,
-    #         old_status=old_status
-    #     )
-    #     after, _ = get_tasks_and_deps(loaded_db)
-    #     foo_after = {t.taskid: t for t in after}["foo"]
-    #     assert foo_after.status == TaskStatus.IN_PROGRESS.value
-    #     assert foo_after.last_modified is not None
-    #
-    # def test_update_task_status_no_from_same_status(self, loaded_db):
-    #     # if you don't provide old_status, we always force an update; this
-    #     # means that if the status you have is the same as the new one, we
-    #     # see an update (because the timestamp has changed).
-    #     # I'm not 100% sure whether this is the behavior we want; it may
-    #     # need to change in the future.
-    #     before, _  = get_tasks_and_deps(loaded_db)
-    #     foo_before = {t.taskid: t for t in before}["foo"]
-    #     loaded_db.update_task_status(
-    #         taskid="foo",
-    #         status=TaskStatus.AVAILABLE
-    #     )
-    #     after, _ = get_tasks_and_deps(loaded_db)
-    #     foo_after = {t.taskid: t for t in after}["foo"]
-    #     assert foo_before.taskid == foo_after.taskid
-    #     assert foo_before.status == foo_after.status
-    #     assert foo_before.last_modified is None
-    #     assert foo_after.last_modified is not None
-    #
-    # def test_update_task_status_from_wrong_status(self, loaded_db):
-    #     with pytest.raises(NoStatusChange):
-    #         loaded_db.update_task_status("foo", TaskStatus.COMPLETED,
-    #                                      TaskStatus.IN_PROGRESS)
