@@ -3,7 +3,7 @@ import sqlalchemy as sqla
 
 # remaining imports are for typing
 from typing import Optional, Iterable
-from .models import TaskStatus, Task
+from .models import TaskStatus
 from os import PathLike
 import networkx as nx
 
@@ -185,7 +185,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
         # TODO: create indices that may be needed for performance
         metadata.create_all(bind=engine)
 
-    def add_task(self, task: Task, requirements: Iterable[Task]):
+    def add_task(self, taskid: str, requirements: Iterable[str]):
         ...
 
     def add_task_network(self, task_network: nx.DiGraph):
