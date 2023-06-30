@@ -3,6 +3,7 @@ import sqlalchemy as sqla
 import networkx as nx
 from .models import TaskStatus
 
+# remaining imports are for typing
 from typing import Optional, Iterable
 from os import PathLike
 
