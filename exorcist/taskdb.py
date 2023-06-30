@@ -54,7 +54,9 @@ class AbstractTaskStatusDB(abc.ABC):
         Parameters
         ----------
         task_network: nx.Digraph
-            A network with taskid strings as nodes.
+            A network with taskids (str) as nodes. Edges in this graph
+            follow the direction of time/flow of information: from earlier
+            tasks to later tasks; from requirements to subsequent.
         """
         raise NotImplementedError()
 
