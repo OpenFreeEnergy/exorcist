@@ -3,13 +3,15 @@ import sqlalchemy as sqla
 import networkx as nx
 from .models import TaskStatus
 from datetime import datetime
+import logging
 
 # imports for typing
 from typing import Optional, Iterable
 from os import PathLike
 from sqlalchemy.sql.roles import StatementRole as SQLStatement
 
-_SENTINEL = object()
+_logger = logging.getLogger(__name__)
+
 
 def sqlite_fk_pragma(dbapi_conn, conn_record):
     cursor = dbapi_conn.cursor()
@@ -396,6 +398,13 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
 
     def _mark_task_completed_success(self, taskid: str):
+        _logger.debug(f"Marking task '{taskid}' as successfully completed")
+        # TODO: there may be ways to make this faster; this is likely to be
+        # the most important point for performance considerations
+
+        # as a minor performance point, we create the SQL statements before
+        # executing them in the transaction
+
         # conveniences (esp since from is a reserved word)
         from_col = getattr(self.dependencies_table.c, "from")
         to_col = self.dependencies_table.c.to
@@ -416,32 +425,44 @@ class TaskStatusDB(AbstractTaskStatusDB):
             .returning(to_col)
         )
 
-        # 3. SELECT the resulting tasks (resultid) have no
-        #    rows in dependencies where to==resultid and blocking==True.
-        #    These are the tasks that are now unblocked.
-        # TODO: this is incomplete
-        select_unblocked = (
-            sqla.select(self.dependencies_table)
-            .where(to_col == sqla.bindparam("taskid")
-                   and self.dependencies.c.blocking == True)
+        # 3. SELECT the tasks among the tasks that have been partially
+        #    unblocked that are actually still blocked. For now, we'll do a
+        #    set different in Python.
+        #    NOTE: this is the tricky bit, where several implementations
+        #    might be worth trying for performance.
+        still_blocked = (
+            sqla.select(to_col)
+            .filter(to_col.in_(sqla.bindparam("candidates")))
+            .where(self.dependencies_table.c.blocking == True)
         )
 
         # 4. UPDATE tasks table to mark these tasks as available
         update_task_unblocked = self._task_row_update_statement(
-            taskid=sqla.bindparam('taskid'),
+            taskid=sqla.bindparam('unblock'),
             status=TaskStatus.AVAILABLE,
             old_status=TaskStatus.BLOCKED
         )
 
+        # now we actually DO those steps
         with self.engine.begin() as conn:
+            _logger.debug("Setting task status to COMPLETED")
             completed_task = conn.execute(update_task_completed)
-            possibly_unblocked = conn.execute(update_deps).fetchall()
-            to_unblock = conn.execute(query_unblocked, [
-                {'taskid': t[0]} for t in possibly_unblocked
-            ])
-            unblocked = conn.execute(update_task_unblocked, [
-                {'taskid': t[0]} for t in to_unblock
-            ])
+            _logger.debug("Identifying candidates to unblock")
+            candidates = conn.execute(update_deps).fetchall()
+            candidates = {c[0] for c in candidates}
+            _logger.debug("Identifying which candidates should unblocked")
+            blocked = conn.execute(
+                still_blocked, {"candidates": candidates}
+            ).fetchall()
+            blocked = {c[0] for c in blocked}
+            to_unblock = candidates - blocked
+            if to_unblock:
+                _logger.debug("Moving unblocked tasks to AVAILABLE")
+                unblocked = conn.execute(update_task_unblocked, [
+                    {'unblock': unblock} for unblock in to_unblock
+                ])
+            else:
+                _logger.debug("No tasks to unblock")
 
     def mark_task_completed(self, taskid: str, success: bool):
         if success:

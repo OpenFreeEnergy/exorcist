@@ -63,11 +63,11 @@ def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE):
 
 _DEFAULT_DATETIME = datetime(1970, 1, 1)
 
-def patch_datetime_now():
+def patch_datetime_now(with_datetime=_DEFAULT_DATETIME):
     # turns out we can't patch just the now() method (datetime is immutable,
     # probably C code?) so we have to patch the entire datetime module
     loc = "exorcist.taskdb.datetime"
-    datetime_now = mock.Mock(now=mock.Mock(return_value=_DEFAULT_DATETIME))
+    datetime_now = mock.Mock(now=mock.Mock(return_value=with_datetime))
     return mock.patch(loc, datetime_now)
 
 @pytest.fixture
@@ -302,11 +302,176 @@ class TestTaskStatusDB:
         }
         assert deps == {("foo", "bar", True)}
 
-    def test_mark_task_completed_success(self, loaded_db):
-        ...
+    def test_mark_task_completed_success(self, fresh_db):
+        add_mock_data(fresh_db.metadata, fresh_db.engine,
+                      status=TaskStatus.IN_PROGRESS, tries=1)
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("foo", TaskStatus.IN_PROGRESS.value, None, 1, 3),
+            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("foo", "bar", True)}
 
-    def test_mark_task_completed_success_sequence(
-        self,
-        diamond_taskid_network
-    ):
-        ...
+        with patch_datetime_now():
+            fresh_db.mark_task_completed("foo", success=True)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("foo", TaskStatus.COMPLETED.value, _DEFAULT_DATETIME, 1, 3),
+            ("bar", TaskStatus.AVAILABLE.value, _DEFAULT_DATETIME, 0, 3)
+        }
+        assert deps == {("foo", "bar", False)}
+
+    def test_diamond_network_sequence(self, fresh_db,
+                                      diamond_taskid_network):
+        # this does the whole process of adding a task network to a database
+        # and running it step by step.
+        fresh_db.add_task_network(diamond_taskid_network, max_tries=3)
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.AVAILABLE.value, None, 0, 3),
+            ("B", TaskStatus.BLOCKED.value, None, 0, 3),
+            ("C", TaskStatus.BLOCKED.value, None, 0, 3),
+            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("A", "B", True), ("A", "C", True),
+                        ("B", "D", True), ("C", "D", True)}
+
+        # check out first task
+        datetime_sel1 = datetime(1970, 1, 1)
+        with patch_datetime_now(datetime_sel1):
+            sel1 = fresh_db.check_out_task()
+        assert sel1 == "A"
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.IN_PROGRESS.value, datetime_sel1, 1, 3),
+            ("B", TaskStatus.BLOCKED.value, None, 0, 3),
+            ("C", TaskStatus.BLOCKED.value, None, 0, 3),
+            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("A", "B", True), ("A", "C", True),
+                        ("B", "D", True), ("C", "D", True)}
+
+        # finish first task
+        datetime_fin1 = datetime(1970, 1, 2)
+        with patch_datetime_now(datetime_fin1):
+            fin1 = fresh_db.mark_task_completed(sel1, success=True)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
+            ("B", TaskStatus.AVAILABLE.value, datetime_fin1, 0, 3),
+            ("C", TaskStatus.AVAILABLE.value, datetime_fin1, 0, 3),
+            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("A", "B", False), ("A", "C", False),
+                        ("B", "D", True), ("C", "D", True)}
+
+        # check out second task
+        datetime_sel2 = datetime(1970, 2, 1)
+        with patch_datetime_now(datetime_sel2):
+            sel2 = fresh_db.check_out_task()
+
+        sel3 = {"B": "C", "C": "B"}[sel2]  # KeyError means bad sel2 value
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
+            (sel2, TaskStatus.IN_PROGRESS.value, datetime_sel2, 1, 3),
+            (sel3, TaskStatus.AVAILABLE.value, datetime_fin1, 0, 3),
+            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("A", "B", False), ("A", "C", False),
+                        ("B", "D", True), ("C", "D", True)}
+
+        # finish second task
+        datetime_fin2 = datetime(1970, 2, 2)
+        with patch_datetime_now(datetime_fin2):
+            fin2 = fresh_db.mark_task_completed(sel2, success=True)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
+            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
+            (sel3, TaskStatus.AVAILABLE.value, datetime_fin1, 0, 3),
+            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("A", "B", False), ("A", "C", False),
+                        (sel2, "D", False), (sel3, "D", True)}
+
+        # check out third task
+        datetime_sel3 = datetime(1970, 3, 1)
+        with patch_datetime_now(datetime_sel3):
+            # assertion error here if sel2, sel3 not in
+            # {(B, C), (C, B)} -- this is where we check that sel2 and sel3
+            # were B and C
+            assert fresh_db.check_out_task() == sel3
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
+            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
+            (sel3, TaskStatus.IN_PROGRESS.value, datetime_sel3, 1, 3),
+            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("A", "B", False), ("A", "C", False),
+                        (sel2, "D", False), (sel3, "D", True)}
+
+        # finish third task
+        datetime_fin3 = datetime(1970, 3, 2)
+        with patch_datetime_now(datetime_fin3):
+            fin3 = fresh_db.mark_task_completed(sel3, success=True)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
+            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
+            (sel3, TaskStatus.COMPLETED.value, datetime_fin3, 1, 3),
+            ("D", TaskStatus.AVAILABLE.value, datetime_fin3, 0, 3),
+        }
+        assert deps == {("A", "B", False), ("A", "C", False),
+                        (sel2, "D", False), (sel3, "D", False)}
+
+        # check out fourth task
+        datetime_sel4 = datetime(1970, 4, 1)
+        with patch_datetime_now(datetime_sel4):
+            sel4 = fresh_db.check_out_task()
+
+        assert sel4 == "D"
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
+            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
+            (sel3, TaskStatus.COMPLETED.value, datetime_fin3, 1, 3),
+            ("D", TaskStatus.IN_PROGRESS.value, datetime_sel4, 1, 3),
+        }
+        assert deps == {("A", "B", False), ("A", "C", False),
+                        ("B", "D", False), ("C", "D", False)}
+
+        # finish fourth task
+        datetime_fin4 = datetime(1970, 4, 2)
+        with patch_datetime_now(datetime_fin4):
+            fin4 = fresh_db.mark_task_completed(sel4, success=True)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
+            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
+            (sel3, TaskStatus.COMPLETED.value, datetime_fin3, 1, 3),
+            ("D", TaskStatus.COMPLETED.value, datetime_fin4, 1, 3),
+        }
+        assert deps == {("A", "B", False), ("A", "C", False),
+                        ("B", "D", False), ("C", "D", False)}
+
+        # if you check out another task, you get None (and DB is unchanged)
+        sel5 = fresh_db.check_out_task()
+        assert sel5 is None
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
+            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
+            (sel3, TaskStatus.COMPLETED.value, datetime_fin3, 1, 3),
+            ("D", TaskStatus.COMPLETED.value, datetime_fin4, 1, 3),
+        }
+        assert deps == {("A", "B", False), ("A", "C", False),
+                        ("B", "D", False), ("C", "D", False)}
+
