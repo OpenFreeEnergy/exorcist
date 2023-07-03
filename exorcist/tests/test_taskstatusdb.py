@@ -163,3 +163,14 @@ class TestTaskStatusDB:
 
         assert len(deps) == len(expected)
         assert set(deps) == expected
+
+    @pytest.mark.parametrize('fixture', ['fresh_db', 'loaded_db'])
+    def test_get_all_tasks(self, request, fixture):
+        expected = {
+            'fresh_db': set(),
+            'loaded_db': {('foo', TaskStatus.AVAILABLE.value, None, 0, 3),
+                          ('bar', TaskStatus.BLOCKED.value, None, 0, 3)},
+        }[fixture]
+        db = request.getfixturevalue(fixture)
+        tasks = set(db.get_all_tasks())
+        assert tasks == expected
