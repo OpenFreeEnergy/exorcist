@@ -9,7 +9,6 @@ from typing import Optional, Iterable
 from os import PathLike
 from sqlalchemy.sql.roles import StatementRole as SQLStatement
 
-_SENTINEL = object()
 
 def _sqlite_fk_pragma(dbapi_conn, conn_record):
     """Event listener function for foreign keys in sqlite
@@ -404,7 +403,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             )
             result = conn.execute(update_stmt)
 
-        self._validate_update_result(result)
+            self._validate_update_result(result)
 
         return task_row.taskid
 
