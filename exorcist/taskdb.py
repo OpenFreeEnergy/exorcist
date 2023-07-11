@@ -11,7 +11,18 @@ from sqlalchemy.sql.roles import StatementRole as SQLStatement
 
 _SENTINEL = object()
 
-def sqlite_fk_pragma(dbapi_conn, conn_record):
+def _sqlite_fk_pragma(dbapi_conn, conn_record):
+    """Event listener function for foreign keys in sqlite
+
+    By default, SQLite doesn't enforce foreign keys (FKs). This event
+    listeners emits the PRAGMA command to turn FK enforcement on. This
+    should be attached as a SQLAlchemy listerer to the task database if and
+    only if the database backend is sqlite.
+
+    Futher details:
+
+    https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#foreign-key-support
+    """
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
@@ -48,6 +59,9 @@ class AbstractTaskStatusDB(abc.ABC):
         requirements: Iterable[str]
             taskids that directly block the task to be added (typically,
             whose outputs are inputs to the task)
+        max_tries: int
+            the maximum number of trials for this task (this to total
+            tries, so retries + 1)
         """
         raise NotImplementedError()
 
@@ -58,7 +72,12 @@ class AbstractTaskStatusDB(abc.ABC):
         Parameters
         ----------
         task_network: nx.Digraph
-            A network with taskid strings as nodes.
+            A network with taskids (str) as nodes. Edges in this graph
+            follow the direction of time/flow of information: from earlier
+            tasks to later tasks; from requirements to subsequent.
+        max_tries: int
+            the maximum number of trials for these tasks (this to total
+            tries, so retries + 1)
         """
         raise NotImplementedError()
 
@@ -78,19 +97,22 @@ class AbstractTaskStatusDB(abc.ABC):
         """
         raise NotImplementedError()
 
-    @abc.abstractmethod
-    def mark_task_aborted_incomplete(self, taskid: str):
-        """
-        Update the database when a task fails to complete.
+    # we're probably going to want something like this in the future to
+    # distinguish between failures in the execution system and failures
+    # during a task
+    # @abc.abstractmethod
+    # def mark_task_aborted_incomplete(self, taskid: str):
+    #     """
+    #     Update the database when a task fails to complete.
 
-        This may be caused by, e.g., a walltime limit being hit.
+    #     This may be caused by, e.g., a walltime limit being hit.
 
-        Parameters
-        ----------
-        taskid: str
-            the taskid of the failed task
-        """
-        raise NotImplementedError()
+    #     Parameters
+    #     ----------
+    #     taskid: str
+    #         the taskid of the failed task
+    #     """
+    #     raise NotImplementedError()
 
     @abc.abstractmethod
     def mark_task_completed(self, taskid: str, success: bool):
@@ -120,9 +142,9 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def __init__(self, engine: sqla.Engine):
         if (
             engine.name == "sqlite"
-            and not sqla.event.contains(engine, "connect", sqlite_fk_pragma)
+            and not sqla.event.contains(engine, "connect", _sqlite_fk_pragma)
         ):
-            sqla.event.listen(engine, "connect", sqlite_fk_pragma)
+            sqla.event.listen(engine, "connect", _sqlite_fk_pragma)
 
         metadata = sqla.MetaData()
         metadata.reflect(engine)
@@ -146,6 +168,16 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def dependencies_table(self):
         return self.metadata.tables['dependencies']
 
+    def get_all_tasks(self) -> Iterable[sqla.Row]:
+        """Yield current row for all tasks.
+
+        This is mainly intended for debug and development usage; a more
+        standardized variant will likely become part of the main API when we
+        want dashboards, etc.
+        """
+        with self.engine.connect() as conn:
+            yield from conn.execute(sqla.select(self.tasks_table)).all()
+
     @classmethod
     def from_filename(cls, filename: PathLike, *, overwrite: bool = False,
                     **kwargs):
@@ -164,7 +196,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             generated internally.
         """
         engine = sqla.create_engine(f"sqlite:///{filename}", **kwargs)
-        sqla.event.listen(engine, "connect", sqlite_fk_pragma)
+        sqla.event.listen(engine, "connect", _sqlite_fk_pragma)
         if overwrite:
             metadata = sqla.MetaData()
             metadata.reflect(bind=engine)
@@ -241,6 +273,9 @@ class TaskStatusDB(AbstractTaskStatusDB):
         requirements: Iterable[str]
             taskids that directly block the task to be added (typically,
             whose outputs are inputs to the task)
+        max_tries: int
+            the maximum number of trials for this task (this to total
+            tries, so retries + 1)
         """
         task_data, deps = self._get_task_and_dep_data(taskid, requirements,
                                                       max_tries)
@@ -255,6 +290,9 @@ class TaskStatusDB(AbstractTaskStatusDB):
             A network with taskids (str) as nodes. Edges in this graph
             follow the direction of time/flow of information: from earlier
             tasks to later tasks; from requirements to subsequent.
+        max_tries: int
+            the maximum number of trials for these tasks (this to total
+            tries, so retries + 1)
         """
         all_data = [
             self._get_task_and_dep_data(node, taskid_network.pred[node],
@@ -369,9 +407,6 @@ class TaskStatusDB(AbstractTaskStatusDB):
         self._validate_update_result(result)
 
         return task_row.taskid
-
-    def mark_task_aborted_incomplete(self, taskid: str):
-        ...
 
     def mark_task_completed(self, completed_taskid: str):
         ...
