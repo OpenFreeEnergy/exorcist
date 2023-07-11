@@ -59,7 +59,7 @@ class AbstractTaskStatusDB(abc.ABC):
             taskids that directly block the task to be added (typically,
             whose outputs are inputs to the task)
         max_tries: int
-            the maximum number of trials for this task (this to total
+            the maximum number of trials for this task (this is total
             tries, so retries + 1)
         """
         raise NotImplementedError()
@@ -75,7 +75,7 @@ class AbstractTaskStatusDB(abc.ABC):
             follow the direction of time/flow of information: from earlier
             tasks to later tasks; from requirements to subsequent.
         max_tries: int
-            the maximum number of trials for these tasks (this to total
+            the maximum number of trials for these tasks (this is total
             tries, so retries + 1)
         """
         raise NotImplementedError()
@@ -237,6 +237,37 @@ class TaskStatusDB(AbstractTaskStatusDB):
     @staticmethod
     def _get_task_and_dep_data(taskid: str, requirements: Iterable[str],
                                max_tries: int):
+        """Create a dicts with database info based on a task to add.
+
+        Parameters
+        ----------
+        taskid: str
+            the taskid for this task
+        requirements: Iterable[str]
+            taskids of any tasks that are immediate blockers of this task
+            (typically, this means that that outputs of tasks in this list
+            are inputs to this task)
+        max_tries: int
+            the maximum number of trials for this task (this is total
+            tries, so retries + 1)
+
+        Returns
+        -------
+        task_data: Dict
+            Dict with keys/value types as:
+
+            * 'taskid': str
+            * 'status': int
+            * 'last_modified': datetime | None
+            * 'tries': int
+            * 'max_tries': int
+
+        deps_data: List[Dict]
+            list of dicts describing dependencies between tasks. Each dict
+            has keys 'from' and 'to', with values corresponding to the
+            taskid string of a task. The 'from' task must complete before
+            the 'to' task.
+        """
         stat = TaskStatus.BLOCKED if requirements else TaskStatus.AVAILABLE
         task_data = {
             'taskid': taskid,
@@ -253,6 +284,33 @@ class TaskStatusDB(AbstractTaskStatusDB):
         return [task_data], deps_data
 
     def _insert_task_and_deps_data(self, task_data, deps_data):
+        """Insert data into database.
+
+        This performs the actual insertion of task data into a database
+        after it has been normalized to a form suitable for multiple tasks.
+
+        The inputs dicts to this come from running
+        :method:`._get_task_and_dep_data` on each task.
+
+        Parameters
+        ----------
+        task_data: List[Dict]
+            list of dicts describing tasks. Each dict consists of the
+            following keys (with type after colon):
+
+            * 'taskid': str
+            * 'status': int
+            * 'last_modified': datetime | None
+            * 'tries': int
+            * 'max_tries': int
+
+        deps_data: List[Dict]
+            list of dicts describing dependencies between tasks. Each dict
+            has keys 'from' and 'to', with values corresponding to the
+            taskid string of a task that is either in the database or in the
+            ``task_data`` given here. The 'from' task must complete before
+            the 'to' task.
+        """
         task_ins = sqla.insert(self.tasks_table).values(task_data)
         deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
 
@@ -273,7 +331,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             taskids that directly block the task to be added (typically,
             whose outputs are inputs to the task)
         max_tries: int
-            the maximum number of trials for this task (this to total
+            the maximum number of trials for this task (this is total
             tries, so retries + 1)
         """
         task_data, deps = self._get_task_and_dep_data(taskid, requirements,
@@ -290,7 +348,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             follow the direction of time/flow of information: from earlier
             tasks to later tasks; from requirements to subsequent.
         max_tries: int
-            the maximum number of trials for these tasks (this to total
+            the maximum number of trials for these tasks (this is total
             tries, so retries + 1)
         """
         all_data = [
@@ -319,9 +377,16 @@ class TaskStatusDB(AbstractTaskStatusDB):
             task ID of the task to update
         status: TaskStatus
             the status to change to
-        old_status: TaskStatus
-            the previous status
-        last_modified
+        is_checkout: bool
+            True if this is a checkout operation (and therefore should
+            update the number of tries)
+        max_tries: Optional[int]
+            value to set for the maximum number of trials for this task
+            (this is total tries, so retries + 1)
+        old_status: Optional[TaskStatus]
+            the previous status. If specified, the task will only match if
+            this is its current status. Default (None) allows update from
+            any previous status
 
         Returns
         -------
@@ -347,8 +412,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
             'status': status.value,
             'last_modified': datetime.now(),
         }
+
         if is_checkout:
             values['tries'] = self.tasks_table.c.tries + 1
+
         if max_tries is not None:
             values['max_tries'] = max_tries
 
