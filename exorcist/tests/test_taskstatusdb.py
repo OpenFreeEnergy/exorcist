@@ -232,7 +232,8 @@ class TestTaskStatusDB:
         assert len(tasks) == len(expected_tasks)
         assert len(deps) == len(expected_deps)
 
-    def test_status_update_statement(self, loaded_db):
+    def test_task_row_update_statement(self, loaded_db):
+        # TODO: I'm going to do this in a future PR
         ...
 
     def test_check_out_task(self, loaded_db):
