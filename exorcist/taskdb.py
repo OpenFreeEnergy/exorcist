@@ -484,7 +484,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def _mark_task_completed_failure(self, taskid: str):
         status_statement = sqla.case(
             (
-                self.tasks_table.c.tries >= self.tasks_table.c.max_tries,
+                self.tasks_table.c.tries == self.tasks_table.c.max_tries,
                 TaskStatus.TOO_MANY_RETRIES.value
             ),
             else_=TaskStatus.AVAILABLE.value
