@@ -195,6 +195,17 @@ class TestTaskStatusDB:
         assert len(deps) == len(expected)
         assert set(deps) == expected
 
+    @pytest.mark.parametrize('fixture', ['fresh_db', 'loaded_db'])
+    def test_get_all_tasks(self, request, fixture):
+        expected = {
+            'fresh_db': set(),
+            'loaded_db': {('foo', TaskStatus.AVAILABLE.value, None, 0, 3),
+                ('bar', TaskStatus.BLOCKED.value, None, 0, 3)},
+        }[fixture]
+        db = request.getfixturevalue(fixture)
+        tasks = set(db.get_all_tasks())
+        assert tasks == expected
+
     def test_add_task(self, fresh_db):
         # task without prerequisites
         fresh_db.add_task("foo", requirements=[], max_tries=3)
@@ -233,7 +244,8 @@ class TestTaskStatusDB:
         assert len(tasks) == len(expected_tasks)
         assert len(deps) == len(expected_deps)
 
-    def test_status_update_statement(self, loaded_db):
+    def test_task_row_update_statement(self, loaded_db):
+        # TODO: I'm going to do this in a future PR
         ...
 
     def test_check_out_task(self, loaded_db):
@@ -254,7 +266,7 @@ class TestTaskStatusDB:
     def test_check_out_task_empty_db(self, fresh_db):
         assert fresh_db.check_out_task() is None
 
-    def test_check_out_task_no_available(self, loaded_db):
+    def test_check_out_task_no_available(self, fresh_db):
         add_mock_data(fresh_db.metadata, fresh_db.engine, tries=1,
                       status=TaskStatus.IN_PROGRESS)
         assert fresh_db.check_out_task() is None
