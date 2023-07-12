@@ -1,11 +1,27 @@
 import abc
 import sqlalchemy as sqla
+import networkx as nx
+from .models import TaskStatus
 
 # remaining imports are for typing
 from typing import Optional, Iterable
-from .models import TaskStatus
 from os import PathLike
-import networkx as nx
+
+def _sqlite_fk_pragma(dbapi_conn, conn_record):
+    """Event listener function for foreign keys in sqlite
+
+    By default, SQLite doesn't enforce foreign keys (FKs). This event
+    listeners emits the PRAGMA command to turn FK enforcement on. This
+    should be attached as a SQLAlchemy listerer to the task database if and
+    only if the database backend is sqlite.
+
+    Futher details:
+
+    https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#foreign-key-support
+    """
+    cursor = dbapi_conn.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
 
 
 class NoStatusChange(Exception):
@@ -28,7 +44,8 @@ class NoStatusChange(Exception):
 
 class AbstractTaskStatusDB(abc.ABC):
     @abc.abstractmethod
-    def add_task(self, taskid: str, requirements: Iterable[str]):
+    def add_task(self, taskid: str, requirements: Iterable[str],
+                 max_tries: int):
         """Add a task to the database.
 
         Parameters
@@ -38,17 +55,25 @@ class AbstractTaskStatusDB(abc.ABC):
         requirements: Iterable[str]
             taskids that directly block the task to be added (typically,
             whose outputs are inputs to the task)
+        max_tries: int
+            the maximum number of trials for this task (this to total
+            tries, so retries + 1)
         """
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def add_task_network(self, task_network: nx.DiGraph):
+    def add_task_network(self, task_network: nx.DiGraph, max_tries: int):
         """Add a network of tasks to the database.
 
         Parameters
         ----------
         task_network: nx.Digraph
-            A network with taskid strings as nodes.
+            A network with taskids (str) as nodes. Edges in this graph
+            follow the direction of time/flow of information: from earlier
+            tasks to later tasks; from requirements to subsequent.
+        max_tries: int
+            the maximum number of trials for these tasks (this to total
+            tries, so retries + 1)
         """
         raise NotImplementedError()
 
@@ -110,6 +135,12 @@ class TaskStatusDB(AbstractTaskStatusDB):
     backend.
     """
     def __init__(self, engine: sqla.Engine):
+        if (
+            engine.name == "sqlite"
+            and not sqla.event.contains(engine, "connect", _sqlite_fk_pragma)
+        ):
+            sqla.event.listen(engine, "connect", _sqlite_fk_pragma)
+
         metadata = sqla.MetaData()
         metadata.reflect(engine)
         if self._is_empty_db(metadata):
@@ -160,6 +191,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             generated internally.
         """
         engine = sqla.create_engine(f"sqlite:///{filename}", **kwargs)
+        sqla.event.listen(engine, "connect", _sqlite_fk_pragma)
         if overwrite:
             metadata = sqla.MetaData()
             metadata.reflect(bind=engine)
@@ -198,11 +230,74 @@ class TaskStatusDB(AbstractTaskStatusDB):
         # TODO: create indices that may be needed for performance
         metadata.create_all(bind=engine)
 
-    def add_task(self, taskid: str, requirements: Iterable[str]):
-        ...
+    @staticmethod
+    def _get_task_and_dep_data(taskid: str, requirements: Iterable[str],
+                               max_tries: int):
+        stat = TaskStatus.BLOCKED if requirements else TaskStatus.AVAILABLE
+        task_data = {
+            'taskid': taskid,
+            'status': stat.value,
+            'last_modified': None,
+            'tries': 0,
+            'max_tries': max_tries
+        }
 
-    def add_task_network(self, task_network: nx.DiGraph):
-        ...
+        deps_data = [
+            {'from': req, 'to': taskid}
+            for req in requirements
+        ]
+        return [task_data], deps_data
+
+    def _insert_task_and_deps_data(self, task_data, deps_data):
+        task_ins = sqla.insert(self.tasks_table).values(task_data)
+        deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
+
+        with self.engine.begin() as conn:
+            res1 = conn.execute(task_ins)
+            if deps_data:  # don't insert on empty deps
+                res2 = conn.execute(deps_ins)
+
+    def add_task(self, taskid: str, requirements: Iterable[str],
+                 max_tries: int):
+        """Add a task to the database.
+
+        Parameters
+        ----------
+        taskid: str
+            the task to add to the database
+        requirements: Iterable[str]
+            taskids that directly block the task to be added (typically,
+            whose outputs are inputs to the task)
+        max_tries: int
+            the maximum number of trials for this task (this to total
+            tries, so retries + 1)
+        """
+        task_data, deps = self._get_task_and_dep_data(taskid, requirements,
+                                                      max_tries)
+        self._insert_task_and_deps_data(task_data, deps)
+
+    def add_task_network(self, taskid_network: nx.DiGraph, max_tries: int):
+        """Add a network of tasks to the database.
+
+        Parameters
+        ----------
+        taskid_network: nx.Digraph
+            A network with taskids (str) as nodes. Edges in this graph
+            follow the direction of time/flow of information: from earlier
+            tasks to later tasks; from requirements to subsequent.
+        max_tries: int
+            the maximum number of trials for these tasks (this to total
+            tries, so retries + 1)
+        """
+        all_data = [
+            self._get_task_and_dep_data(node, taskid_network.pred[node],
+                                        max_tries)
+            for node in nx.topological_sort(taskid_network)
+        ]
+        tasklists, deplists = zip(*all_data)
+        tasks = sum(tasklists, [])
+        deps = sum(deplists, [])
+        self._insert_task_and_deps_data(tasks, deps)
 
     def update_task_status(
         self,
@@ -233,4 +328,8 @@ class TaskStatusDB(AbstractTaskStatusDB):
         ...
 
     def mark_task_completed(self, completed_taskid: str):
+        """
+        Update the database (including the DAG info) to show that the task
+        has been completed.
+        """
         ...

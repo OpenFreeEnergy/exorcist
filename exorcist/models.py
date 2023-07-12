@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import TypeVar, Generic
 import dataclasses
 
 class TaskStatus(Enum):

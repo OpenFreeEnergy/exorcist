@@ -2,6 +2,7 @@ import pytest
 from exorcist import TaskStatusDB, NoStatusChange, TaskStatus
 
 import sqlalchemy as sqla
+import networkx as nx
 
 def create_database(metadata, engine, extra_table=False,
                     missing_table=False, extra_column=False,
@@ -67,8 +68,34 @@ def loaded_db(fresh_db):
     add_mock_data(fresh_db.metadata, fresh_db.engine)
     return fresh_db
 
+def count_rows(db, table):
+    query = sqla.select(sqla.func.count()).select_from(table)
+    with db.engine.connect() as conn:
+        count = conn.execute(query).scalar()
+    return count
+
+def get_tasks_and_deps(db):
+    with db.engine.connect() as conn:
+        tasks = set(conn.execute(sqla.select(db.tasks_table)))
+        deps = set(conn.execute(sqla.select(db.dependencies_table)))
+    return tasks, deps
+
+@pytest.fixture
+def diamond_taskid_network():
+    graph = nx.DiGraph()
+    graph.add_nodes_from(["A", "B", "C", "D"])
+    graph.add_edges_from([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")])
+    return graph
+
 
 class TestTaskStatusDB:
+    @staticmethod
+    def is_our_db(db):
+        return (
+            len(db.metadata.tables) == 2
+            and set(db.metadata.tables) == {'tasks', 'dependencies'}
+        )
+
     @staticmethod
     def assert_is_our_db(db):
         assert len(db.metadata.tables) == 2
@@ -77,15 +104,8 @@ class TestTaskStatusDB:
     @staticmethod
     def assert_is_fresh_db(db):
         TestTaskStatusDB.assert_is_our_db(db)
-
-        def count_rows(table):
-            query = sqla.select(sqla.func.count()).select_from(table)
-            with db.engine.connect() as conn:
-                count = conn.execute(query).scalar()
-            return count
-
-        assert count_rows(db.metadata.tables['tasks']) == 0
-        assert count_rows(db.metadata.tables['dependencies']) == 0
+        assert count_rows(db, db.metadata.tables['tasks']) == 0
+        assert count_rows(db, db.metadata.tables['dependencies']) == 0
 
     def test_fresh_db(self, fresh_db):
         # this effectively tests that the __init__ method is working
@@ -169,8 +189,45 @@ class TestTaskStatusDB:
         expected = {
             'fresh_db': set(),
             'loaded_db': {('foo', TaskStatus.AVAILABLE.value, None, 0, 3),
-                          ('bar', TaskStatus.BLOCKED.value, None, 0, 3)},
+                ('bar', TaskStatus.BLOCKED.value, None, 0, 3)},
         }[fixture]
         db = request.getfixturevalue(fixture)
         tasks = set(db.get_all_tasks())
         assert tasks == expected
+
+    def test_add_task(self, fresh_db):
+        # task without prerequisites
+        fresh_db.add_task("foo", requirements=[], max_tries=3)
+        expected_foo_task = ("foo", TaskStatus.AVAILABLE.value, None, 0, 3)
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert set(tasks) == {expected_foo_task}
+        assert set(deps) == set()
+
+        # task with prerequisites
+        fresh_db.add_task("bar", requirements=['foo'], max_tries=3)
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert set(tasks) == {expected_foo_task,
+                              ("bar", TaskStatus.BLOCKED.value, None, 0, 3)}
+        assert set(deps) == {("foo", "bar")}
+
+    def test_add_task_before_requirements(self, fresh_db):
+        with pytest.raises(sqla.exc.IntegrityError, match="FOREIGN KEY"):
+            fresh_db.add_task("bar", requirements=["foo"], max_tries=3)
+
+        # check that task insertion got rolled back
+        self.assert_is_fresh_db(fresh_db)
+
+    def test_add_task_network(self, fresh_db, diamond_taskid_network):
+        fresh_db.add_task_network(diamond_taskid_network, max_tries=3)
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        expected_tasks = {
+            ("A", TaskStatus.AVAILABLE.value, None, 0, 3),
+            ("B", TaskStatus.BLOCKED.value, None, 0, 3),
+            ("C", TaskStatus.BLOCKED.value, None, 0, 3),
+            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        expected_deps = {("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")}
+        assert set(tasks) == expected_tasks
+        assert set(deps) == expected_deps
+        assert len(tasks) == len(expected_tasks)
+        assert len(deps) == len(expected_deps)
