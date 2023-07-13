@@ -268,9 +268,11 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
-            has keys 'from' and 'to', with values corresponding to the
-            taskid string of a task. The 'from' task must complete before
-            the 'to' task.
+            has keys 'from', 'to', and 'blocking'. The values of 'from' and
+            'to' are the taskid strings of tasks, where the 'from' task must
+            complete before the 'to' task. The for 'blocking' is a boolean
+            which indicates whether this dependency is still blocking
+            (namely, whether the 'from' task has completed successfully).
         """
         stat = TaskStatus.BLOCKED if requirements else TaskStatus.AVAILABLE
         task_data = {
@@ -310,10 +312,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
-            has keys 'from' and 'to', with values corresponding to the
-            taskid string of a task that is either in the database or in the
-            ``task_data`` given here. The 'from' task must complete before
-            the 'to' task.
+            has keys 'from', 'to', and 'blocking'. The values of 'from' and
+            'to' are the taskid strings of tasks, where the 'from' task must
+            complete before the 'to' task. The for 'blocking' is a boolean
+            which indicates whether this dependency is still blocking
         """
         task_ins = sqla.insert(self.tasks_table).values(task_data)
         deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
@@ -368,7 +370,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def _task_row_update_statement(
         self,
         taskid: str,
-        status: TaskStatus | SQLStatement,
+        status: Union[TaskStatus, SQLStatement],
         *,
         is_checkout: bool = False,
         max_tries: Optional[int] = None,

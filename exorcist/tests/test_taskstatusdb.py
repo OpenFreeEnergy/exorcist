@@ -92,8 +92,8 @@ def vshape_db(fresh_db):
         {'taskid': "baz", "status": TaskStatus.BLOCKED.value,
          'last_modified': None, 'tries': 0, 'max_tries': 3},
     ]
-    deps = [{'from': "foo", 'to': "baz"},
-            {'from': "bar", 'to': "baz"}]
+    deps = [{'from': "foo", 'to': "baz", 'blocking': True},
+            {'from': "bar", 'to': "baz", 'blocking': True}]
 
     ins_tasks = sqla.insert(metadata.tables['tasks']).values(tasks)
     ins_deps = sqla.insert(metadata.tables['dependencies']).values(deps)
