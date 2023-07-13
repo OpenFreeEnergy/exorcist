@@ -58,7 +58,6 @@ def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE):
         res2 = conn.execute(ins_deps)
         conn.commit()
 
-
 @pytest.fixture
 def fresh_db():
     echo = False  # switch this for debugging
@@ -67,6 +66,31 @@ def fresh_db():
 @pytest.fixture
 def loaded_db(fresh_db):
     add_mock_data(fresh_db.metadata, fresh_db.engine)
+    return fresh_db
+
+@pytest.fixture
+def vshape_db(fresh_db):
+    metadata = fresh_db.metadata
+    engine = fresh_db.engine
+    tasks = [
+        {'taskid': "foo", "status": TaskStatus.AVAILABLE.value,
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
+        {'taskid': "bar", "status": TaskStatus.AVAILABLE.value,
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
+        {'taskid': "baz", "status": TaskStatus.BLOCKED.value,
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
+    ]
+    deps = [{'from': "foo", 'to': "baz"},
+            {'from': "bar", 'to': "baz"}]
+
+    ins_tasks = sqla.insert(metadata.tables['tasks']).values(tasks)
+    ins_deps = sqla.insert(metadata.tables['dependencies']).values(deps)
+
+    with engine.connect() as conn:
+        res1 = conn.execute(ins_tasks)
+        res2 = conn.execute(ins_deps)
+        conn.commit()
+
     return fresh_db
 
 def count_rows(db, table):
@@ -87,7 +111,6 @@ def diamond_taskid_network():
     graph.add_nodes_from(["A", "B", "C", "D"])
     graph.add_edges_from([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")])
     return graph
-
 
 class TestTaskStatusDB:
     @staticmethod
@@ -257,6 +280,14 @@ class TestTaskStatusDB:
         # now there should be no available tasks, so a checkout here will
         # return None
         assert loaded_db.check_out_task() is None
+
+    def test_check_out_task_repeated_checkout_vshape(self, vshape_db):
+        sel1 = vshape_db.check_out_task()
+        sel2 = vshape_db.check_out_task()
+        sel3 = vshape_db.check_out_task()
+        # order isn't guaranteed here, so use a set
+        assert {sel1, sel2} == {"foo", "bar"}
+        assert sel3 is None
 
     def test_check_out_task_empty_db(self, fresh_db):
         assert fresh_db.check_out_task() is None
