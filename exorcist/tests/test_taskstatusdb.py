@@ -251,6 +251,13 @@ class TestTaskStatusDB:
 
         assert bar == ("bar", TaskStatus.BLOCKED.value, None, 0, 3)
 
+    def test_check_out_task_double_checkout(self, loaded_db):
+        taskid = loaded_db.check_out_task()
+        assert taskid == "foo"
+        # now there should be no available tasks, so a checkout here will
+        # return None
+        assert loaded_db.check_out_task() is None
+
     def test_check_out_task_empty_db(self, fresh_db):
         assert fresh_db.check_out_task() is None
 
