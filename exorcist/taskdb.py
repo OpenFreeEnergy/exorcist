@@ -6,7 +6,7 @@ from datetime import datetime
 import logging
 
 # imports for typing
-from typing import Optional, Iterable
+from typing import Optional, Iterable, Union
 from os import PathLike
 from sqlalchemy.sql.roles import StatementRole as SQLStatement
 
@@ -84,7 +84,7 @@ class AbstractTaskStatusDB(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def check_out_task(self) -> str | None:
+    def check_out_task(self) -> Union[str, None]:
         """
         Select a task to be run.
 
