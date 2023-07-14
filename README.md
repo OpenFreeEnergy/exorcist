@@ -17,6 +17,9 @@ tasks = pd.read_sql_table("tasks", db.engine)
 deps = pd.read_sql_table("dependencies", db.engine)
 ```
 
+NOTE: `pandas` is not in the `exorcist` requirement stack, so you may need to
+install it separately.
+
 The tasks table is the main thing you'll be interested in. It has columns for
 the task ID (a string labeling the task), the task status (see
 [models.py](https://github.com/OpenFreeEnergy/exorcist/blob/main/exorcist/models.py)),
