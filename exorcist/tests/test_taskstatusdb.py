@@ -39,12 +39,12 @@ def create_database(metadata, engine, extra_table=False,
 
     metadata.create_all(bind=engine)
 
-def add_mock_data(metadata, engine):
+def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE):
     # add a couple of tasks for when we want to pretend we're opening an
     # existing file
     tasks = [
-        {'taskid': "foo", "status": TaskStatus.AVAILABLE.value,
-         'last_modified': None, 'tries': 0, 'max_tries': 3},
+        {'taskid': "foo", "status": status.value,
+         'last_modified': None, 'tries': tries, 'max_tries': 3},
         {'taskid': "bar", "status": TaskStatus.BLOCKED.value,
          'last_modified': None, 'tries': 0, 'max_tries': 3}
     ]
@@ -58,14 +58,39 @@ def add_mock_data(metadata, engine):
         res2 = conn.execute(ins_deps)
         conn.commit()
 
-
 @pytest.fixture
 def fresh_db():
-    return TaskStatusDB(sqla.create_engine("sqlite://"))
+    echo = False  # switch this for debugging
+    return TaskStatusDB(sqla.create_engine("sqlite://", echo=echo))
 
 @pytest.fixture
 def loaded_db(fresh_db):
     add_mock_data(fresh_db.metadata, fresh_db.engine)
+    return fresh_db
+
+@pytest.fixture
+def vshape_db(fresh_db):
+    metadata = fresh_db.metadata
+    engine = fresh_db.engine
+    tasks = [
+        {'taskid': "foo", "status": TaskStatus.AVAILABLE.value,
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
+        {'taskid': "bar", "status": TaskStatus.AVAILABLE.value,
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
+        {'taskid': "baz", "status": TaskStatus.BLOCKED.value,
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
+    ]
+    deps = [{'from': "foo", 'to': "baz"},
+            {'from': "bar", 'to': "baz"}]
+
+    ins_tasks = sqla.insert(metadata.tables['tasks']).values(tasks)
+    ins_deps = sqla.insert(metadata.tables['dependencies']).values(deps)
+
+    with engine.connect() as conn:
+        res1 = conn.execute(ins_tasks)
+        res2 = conn.execute(ins_deps)
+        conn.commit()
+
     return fresh_db
 
 def count_rows(db, table):
@@ -86,7 +111,6 @@ def diamond_taskid_network():
     graph.add_nodes_from(["A", "B", "C", "D"])
     graph.add_edges_from([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")])
     return graph
-
 
 class TestTaskStatusDB:
     @staticmethod
@@ -155,7 +179,6 @@ class TestTaskStatusDB:
         create_database(metadata, engine, **kwargs)
         with pytest.raises(RuntimeError, "not seem to be a task database"):
             TaskStatusDB(engine)
-
 
     @pytest.mark.parametrize('fixture', ['fresh_db', 'loaded_db'])
     def test_tasks_table(self, request, fixture):
@@ -231,3 +254,45 @@ class TestTaskStatusDB:
         assert set(deps) == expected_deps
         assert len(tasks) == len(expected_tasks)
         assert len(deps) == len(expected_deps)
+
+    def test_task_row_update_statement(self, loaded_db):
+        # TODO: I'm going to do this in a future PR
+        ...
+
+    def test_check_out_task(self, loaded_db):
+        taskid = loaded_db.check_out_task()
+        assert taskid == "foo"
+
+        tasks, deps = get_tasks_and_deps(loaded_db)
+        taskdict = {t[0]: t for t in tasks}
+        foo = taskdict["foo"]
+        bar = taskdict["bar"]
+        assert foo.taskid == "foo"
+        assert foo.status == TaskStatus.IN_PROGRESS.value
+        assert foo.tries == 1
+        assert foo.max_tries == 3
+
+        assert bar == ("bar", TaskStatus.BLOCKED.value, None, 0, 3)
+
+    def test_check_out_task_double_checkout(self, loaded_db):
+        taskid = loaded_db.check_out_task()
+        assert taskid == "foo"
+        # now there should be no available tasks, so a checkout here will
+        # return None
+        assert loaded_db.check_out_task() is None
+
+    def test_check_out_task_repeated_checkout_vshape(self, vshape_db):
+        sel1 = vshape_db.check_out_task()
+        sel2 = vshape_db.check_out_task()
+        sel3 = vshape_db.check_out_task()
+        # order isn't guaranteed here, so use a set
+        assert {sel1, sel2} == {"foo", "bar"}
+        assert sel3 is None
+
+    def test_check_out_task_empty_db(self, fresh_db):
+        assert fresh_db.check_out_task() is None
+
+    def test_check_out_task_no_available(self, fresh_db):
+        add_mock_data(fresh_db.metadata, fresh_db.engine, tries=1,
+                      status=TaskStatus.IN_PROGRESS)
+        assert fresh_db.check_out_task() is None
