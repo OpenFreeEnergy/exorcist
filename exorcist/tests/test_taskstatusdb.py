@@ -353,6 +353,25 @@ class TestTaskStatusDB:
         }
         assert deps == {("foo", "bar", True)}
 
+    def test_mark_task_completed_failure_more_than_max_tries(self, fresh_db):
+        # In practice, this shouldn't occur during normal operation, but
+        # might occur in the future if a user reduces max_tries while
+        # execution is in progress. In that special case, the code will
+        # still act the same on success; this checks that on failure, we no
+        # longer retry.
+        add_mock_data(fresh_db.metadata, fresh_db.engine, tries=5,
+                      status=TaskStatus.IN_PROGRESS)
+        with patch_datetime_now():
+            fresh_db.mark_task_completed("foo", success=False)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("foo", TaskStatus.TOO_MANY_RETRIES.value, _DEFAULT_DATETIME,
+             5, 3),
+            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("foo", "bar", True)}
+
     def test_mark_task_completed_success(self, fresh_db):
         add_mock_data(fresh_db.metadata, fresh_db.engine,
                       status=TaskStatus.IN_PROGRESS, tries=1)

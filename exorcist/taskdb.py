@@ -483,13 +483,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         return task_row.taskid
 
-    def mark_task_aborted_incomplete(self, taskid: str):
-        ...
-
     def _mark_task_completed_failure(self, taskid: str):
         status_statement = sqla.case(
             (
-                self.tasks_table.c.tries == self.tasks_table.c.max_tries,
+                self.tasks_table.c.tries >= self.tasks_table.c.max_tries,
                 TaskStatus.TOO_MANY_RETRIES.value
             ),
             else_=TaskStatus.AVAILABLE.value
@@ -534,7 +531,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         # 3. SELECT the tasks among the tasks that have been partially
         #    unblocked that are actually still blocked. For now, we'll do a
-        #    set different in Python.
+        #    set difference in Python.
         #    NOTE: this is the tricky bit, where several implementations
         #    might be worth trying for performance.
         still_blocked = (
