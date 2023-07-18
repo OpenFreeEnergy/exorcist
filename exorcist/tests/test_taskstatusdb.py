@@ -80,6 +80,31 @@ def loaded_db(fresh_db):
     add_mock_data(fresh_db.metadata, fresh_db.engine)
     return fresh_db
 
+@pytest.fixture
+def vshape_db(fresh_db):
+    metadata = fresh_db.metadata
+    engine = fresh_db.engine
+    tasks = [
+        {'taskid': "foo", "status": TaskStatus.AVAILABLE.value,
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
+        {'taskid': "bar", "status": TaskStatus.AVAILABLE.value,
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
+        {'taskid': "baz", "status": TaskStatus.BLOCKED.value,
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
+    ]
+    deps = [{'from': "foo", 'to': "baz", 'blocking': True},
+            {'from': "bar", 'to': "baz", 'blocking': True}]
+
+    ins_tasks = sqla.insert(metadata.tables['tasks']).values(tasks)
+    ins_deps = sqla.insert(metadata.tables['dependencies']).values(deps)
+
+    with engine.connect() as conn:
+        res1 = conn.execute(ins_tasks)
+        res2 = conn.execute(ins_deps)
+        conn.commit()
+
+    return fresh_db
+
 def count_rows(db, table):
     query = sqla.select(sqla.func.count()).select_from(table)
     with db.engine.connect() as conn:
@@ -98,7 +123,6 @@ def diamond_taskid_network():
     graph.add_nodes_from(["A", "B", "C", "D"])
     graph.add_edges_from([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")])
     return graph
-
 
 class TestTaskStatusDB:
     @staticmethod
@@ -365,6 +389,21 @@ class TestTaskStatusDB:
 
         assert bar == ("bar", TaskStatus.BLOCKED.value, None, 0, 3)
 
+    def test_check_out_task_double_checkout(self, loaded_db):
+        taskid = loaded_db.check_out_task()
+        assert taskid == "foo"
+        # now there should be no available tasks, so a checkout here will
+        # return None
+        assert loaded_db.check_out_task() is None
+
+    def test_check_out_task_repeated_checkout_vshape(self, vshape_db):
+        sel1 = vshape_db.check_out_task()
+        sel2 = vshape_db.check_out_task()
+        sel3 = vshape_db.check_out_task()
+        # order isn't guaranteed here, so use a set
+        assert {sel1, sel2} == {"foo", "bar"}
+        assert sel3 is None
+
     def test_check_out_task_empty_db(self, fresh_db):
         assert fresh_db.check_out_task() is None
 
@@ -412,6 +451,25 @@ class TestTaskStatusDB:
         assert tasks == {
             ("foo", TaskStatus.TOO_MANY_RETRIES.value, _DEFAULT_DATETIME,
              3, 3),
+            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("foo", "bar", True)}
+
+    def test_mark_task_completed_failure_more_than_max_tries(self, fresh_db):
+        # In practice, this shouldn't occur during normal operation, but
+        # might occur in the future if a user reduces max_tries while
+        # execution is in progress. In that special case, the code will
+        # still act the same on success; this checks that on failure, we no
+        # longer retry.
+        add_mock_data(fresh_db.metadata, fresh_db.engine, tries=5,
+                      status=TaskStatus.IN_PROGRESS)
+        with patch_datetime_now():
+            fresh_db.mark_task_completed("foo", success=False)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            ("foo", TaskStatus.TOO_MANY_RETRIES.value, _DEFAULT_DATETIME,
+             5, 3),
             ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
         }
         assert deps == {("foo", "bar", True)}

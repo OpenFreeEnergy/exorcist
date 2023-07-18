@@ -6,7 +6,7 @@ from datetime import datetime
 import logging
 
 # imports for typing
-from typing import Optional, Iterable
+from typing import Optional, Iterable, Union
 from os import PathLike
 from sqlalchemy.sql.roles import StatementRole as SQLStatement
 
@@ -84,7 +84,7 @@ class AbstractTaskStatusDB(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def check_out_task(self) -> str | None:
+    def check_out_task(self) -> Union[str, None]:
         """
         Select a task to be run.
 
@@ -268,9 +268,11 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
-            has keys 'from' and 'to', with values corresponding to the
-            taskid string of a task. The 'from' task must complete before
-            the 'to' task.
+            has keys 'from', 'to', and 'blocking'. The values of 'from' and
+            'to' are the taskid strings of tasks, where the 'from' task must
+            complete before the 'to' task. The for 'blocking' is a boolean
+            which indicates whether this dependency is still blocking
+            (namely, whether the 'from' task has completed successfully).
         """
         stat = TaskStatus.BLOCKED if requirements else TaskStatus.AVAILABLE
         task_data = {
@@ -310,10 +312,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
-            has keys 'from' and 'to', with values corresponding to the
-            taskid string of a task that is either in the database or in the
-            ``task_data`` given here. The 'from' task must complete before
-            the 'to' task.
+            has keys 'from', 'to', and 'blocking'. The values of 'from' and
+            'to' are the taskid strings of tasks, where the 'from' task must
+            complete before the 'to' task. The for 'blocking' is a boolean
+            which indicates whether this dependency is still blocking
         """
         task_ins = sqla.insert(self.tasks_table).values(task_data)
         deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
@@ -368,7 +370,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def _task_row_update_statement(
         self,
         taskid: str,
-        status: TaskStatus | SQLStatement,
+        status: Union[TaskStatus, SQLStatement],
         *,
         is_checkout: bool = False,
         max_tries: Optional[int] = None,
@@ -484,7 +486,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def _mark_task_completed_failure(self, taskid: str):
         status_statement = sqla.case(
             (
-                self.tasks_table.c.tries == self.tasks_table.c.max_tries,
+                self.tasks_table.c.tries >= self.tasks_table.c.max_tries,
                 TaskStatus.TOO_MANY_RETRIES.value
             ),
             else_=TaskStatus.AVAILABLE.value
@@ -529,7 +531,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         # 3. SELECT the tasks among the tasks that have been partially
         #    unblocked that are actually still blocked. For now, we'll do a
-        #    set different in Python.
+        #    set difference in Python.
         #    NOTE: this is the tricky bit, where several implementations
         #    might be worth trying for performance.
         still_blocked = (
