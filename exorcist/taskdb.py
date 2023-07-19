@@ -3,11 +3,14 @@ import sqlalchemy as sqla
 import networkx as nx
 from .models import TaskStatus
 from datetime import datetime
+import logging
 
 # imports for typing
 from typing import Optional, Iterable, Union
 from os import PathLike
 from sqlalchemy.sql.roles import StatementRole as SQLStatement
+
+_logger = logging.getLogger(__name__)
 
 
 def _sqlite_fk_pragma(dbapi_conn, conn_record):
@@ -230,6 +233,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             metadata,
             sqla.Column("from", sqla.String, sqla.ForeignKey("tasks.taskid")),
             sqla.Column("to", sqla.String, sqla.ForeignKey("tasks.taskid")),
+            sqla.Column("blocking", sqla.Boolean),
         )
         # TODO: create indices that may be needed for performance
         metadata.create_all(bind=engine)
@@ -264,9 +268,11 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
-            has keys 'from' and 'to', with values corresponding to the
-            taskid string of a task. The 'from' task must complete before
-            the 'to' task.
+            has keys 'from', 'to', and 'blocking'. The values of 'from' and
+            'to' are the taskid strings of tasks, where the 'from' task must
+            complete before the 'to' task. The for 'blocking' is a boolean
+            which indicates whether this dependency is still blocking
+            (namely, whether the 'from' task has completed successfully).
         """
         stat = TaskStatus.BLOCKED if requirements else TaskStatus.AVAILABLE
         task_data = {
@@ -278,7 +284,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
         }
 
         deps_data = [
-            {'from': req, 'to': taskid}
+            {'from': req, 'to': taskid, 'blocking': True}
             for req in requirements
         ]
         return [task_data], deps_data
@@ -306,10 +312,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
-            has keys 'from' and 'to', with values corresponding to the
-            taskid string of a task that is either in the database or in the
-            ``task_data`` given here. The 'from' task must complete before
-            the 'to' task.
+            has keys 'from', 'to', and 'blocking'. The values of 'from' and
+            'to' are the taskid strings of tasks, where the 'from' task must
+            complete before the 'to' task. The for 'blocking' is a boolean
+            which indicates whether this dependency is still blocking
         """
         task_ins = sqla.insert(self.tasks_table).values(task_data)
         deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
@@ -364,7 +370,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
     def _task_row_update_statement(
         self,
         taskid: str,
-        status: TaskStatus,
+        status: Union[TaskStatus, SQLStatement],
         *,
         is_checkout: bool = False,
         max_tries: Optional[int] = None,
@@ -404,12 +410,15 @@ class TaskStatusDB(AbstractTaskStatusDB):
             .where(self.tasks_table.c.taskid == taskid)
         )
 
+        if isinstance(status, TaskStatus):
+            status = status.value
+
         if old_status is not None:
             stmt = stmt.where(self.tasks_table.c.status == old_status.value)
 
         # create a dict of values to update
         values = {
-            'status': status.value,
+            'status': status,
             'last_modified': datetime.now(),
         }
 
@@ -474,5 +483,109 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         return task_row.taskid
 
-    def mark_task_completed(self, completed_taskid: str):
-        ...
+    def _mark_task_completed_failure(self, taskid: str):
+        status_statement = sqla.case(
+            (
+                self.tasks_table.c.tries >= self.tasks_table.c.max_tries,
+                TaskStatus.TOO_MANY_RETRIES.value
+            ),
+            else_=TaskStatus.AVAILABLE.value
+        )
+        update_task_finished_fail = self._task_row_update_statement(
+            taskid,
+            status=status_statement,
+            old_status=TaskStatus.IN_PROGRESS
+        )
+        with self.engine.begin() as conn:
+            result = conn.execute(update_task_finished_fail)
+            self._validate_update_result(result)
+
+
+    def _mark_task_completed_success(self, taskid: str):
+        _logger.debug(f"Marking task '{taskid}' as successfully completed")
+        # TODO: there may be ways to make this faster; this is likely to be
+        # the most important point for performance considerations
+
+        # as a minor performance point, we create the SQL statements before
+        # executing them in the transaction
+
+        # conveniences (esp since from is a reserved word)
+        from_col = getattr(self.dependencies_table.c, "from")
+        to_col = self.dependencies_table.c.to
+
+        # 1. UPDATE the task status as completed
+        update_task_completed = self._task_row_update_statement(
+            taskid,
+            status=TaskStatus.COMPLETED,
+            old_status=TaskStatus.IN_PROGRESS
+        )
+
+        # 2. UPDATE all dependency rows where from==taskid to mark these as
+        #    no longer blocking; RETURNING 'to'
+        update_deps = (
+            sqla.update(self.dependencies_table)
+            .where(from_col == taskid)
+            .values(blocking=False)
+            .returning(to_col)
+        )
+
+        # 3. SELECT the tasks among the tasks that have been partially
+        #    unblocked that are actually still blocked. For now, we'll do a
+        #    set difference in Python.
+        #    NOTE: this is the tricky bit, where several implementations
+        #    might be worth trying for performance.
+        still_blocked = (
+            sqla.select(to_col)
+            .filter(to_col.in_(sqla.bindparam("candidates")))
+            .where(self.dependencies_table.c.blocking == True)
+        )
+
+        # 4. UPDATE tasks table to mark these tasks as available
+        update_task_unblocked = self._task_row_update_statement(
+            taskid=sqla.bindparam('unblock'),
+            status=TaskStatus.AVAILABLE,
+            old_status=TaskStatus.BLOCKED
+        )
+
+        # now we actually DO those steps
+        with self.engine.begin() as conn:
+            _logger.debug("Setting task status to COMPLETED")
+            completed_task = conn.execute(update_task_completed)
+            _logger.debug("Identifying candidates to unblock")
+            candidates = conn.execute(update_deps).fetchall()
+            candidates = {c[0] for c in candidates}
+            _logger.debug("Identifying which candidates should unblocked")
+            blocked = conn.execute(
+                still_blocked, {"candidates": candidates}
+            ).fetchall()
+            blocked = {c[0] for c in blocked}
+            to_unblock = candidates - blocked
+            if to_unblock:
+                _logger.debug("Moving unblocked tasks to AVAILABLE")
+                unblocked = conn.execute(update_task_unblocked, [
+                    {'unblock': unblock} for unblock in to_unblock
+                ])
+            else:
+                _logger.debug("No tasks to unblock")
+
+    def mark_task_completed(self, taskid: str, success: bool):
+        if success:
+            return self._mark_task_completed_success(taskid)
+        else:
+            return self._mark_task_completed_failure(taskid)
+
+    # TODO: add a method that forces consistency between task table's status
+    # and the dependencies table (no completed task should be blocking
+    # anything)
+    # def update_dependencies_to_match_tasks(self):
+        # 1. UPDATE rows in dependencies where blocking==True and where the
+        #    taskid in 'from' is marked COMPLETED is task table so that they
+        #    are now blocking=False; RETURNING 'to'
+        # 2. QUERY to find which of the resulting tasks (resultid) have no
+        #    no rows in dependencies where to==resultid and
+        #    blocking==True. These are the tasks that are now unblocked.
+        # 3. UPDATE tasks table to mark these tasks as available
+
+        # NOTE: steps 2 and 3 are the same as above; step 1 is just the
+        # difference between doing this for all tasks and doing for one.
+        # Maybe this functions hsould be called from `mark_task_completed`?
