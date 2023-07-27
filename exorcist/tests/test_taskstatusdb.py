@@ -126,13 +126,6 @@ def diamond_taskid_network():
 
 class TestTaskStatusDB:
     @staticmethod
-    def is_our_db(db):
-        return (
-            len(db.metadata.tables) == 2
-            and set(db.metadata.tables) == {'tasks', 'dependencies'}
-        )
-
-    @staticmethod
     def assert_is_our_db(db):
         assert len(db.metadata.tables) == 2
         assert set(db.metadata.tables) == {'tasks', 'dependencies'}
