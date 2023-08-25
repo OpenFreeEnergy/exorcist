@@ -375,6 +375,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
         is_checkout: bool = False,
         max_tries: Optional[int] = None,
         old_status: Optional[TaskStatus] = None,
+        old_tries: Optional[int] = None
     ) -> SQLStatement:
         """
         Parameters
@@ -415,6 +416,9 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         if old_status is not None:
             stmt = stmt.where(self.tasks_table.c.status == old_status.value)
+
+        if old_tries is not None:
+            stmt = stmt.where(self.tasks_table.c.tries == old_tries)
 
         # create a dict of values to update
         values = {
@@ -477,7 +481,9 @@ class TaskStatusDB(AbstractTaskStatusDB):
             update_stmt = self._task_row_update_statement(
                 task_row.taskid,
                 status=TaskStatus.IN_PROGRESS,
-                is_checkout=True
+                is_checkout=True,
+                old_status=TaskStatus.AVAILABLE,
+                old_tries=task_row.tries,
             )
             result = conn.execute(update_stmt)
 
