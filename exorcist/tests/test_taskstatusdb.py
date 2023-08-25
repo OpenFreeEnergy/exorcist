@@ -1,10 +1,12 @@
 import pytest
 from unittest import mock
 from exorcist import TaskStatusDB, NoStatusChange, TaskStatus
+from exorcist.taskdb import _logger as taskdb_logger
 
 import sqlalchemy as sqla
 import networkx as nx
 from datetime import datetime
+import logging
 
 def create_database(metadata, engine, extra_table=False,
                     missing_table=False, extra_column=False,
@@ -272,7 +274,11 @@ class TestTaskStatusDB:
         # TODO: I'm going to do this in a future PR
         ...
 
-    def test_check_out_task(self, loaded_db):
+    # be sure to cover extra code paths when doing DEBUG logging
+    @pytest.mark.parametrize('loglevel', [logging.DEBUG, logging.WARNING])
+    def test_check_out_task(self, loaded_db, loglevel):
+        taskdb_logger.setLevel(loglevel)
+
         taskid = loaded_db.check_out_task()
         assert taskid == "foo"
 
@@ -286,6 +292,7 @@ class TestTaskStatusDB:
         assert foo.max_tries == 3
 
         assert bar == ("bar", TaskStatus.BLOCKED.value, None, 0, 3)
+        taskdb_logger.setLevel(logging.NOTSET)
 
     def test_check_out_task_double_checkout(self, loaded_db):
         taskid = loaded_db.check_out_task()
