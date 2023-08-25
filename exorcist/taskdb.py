@@ -458,10 +458,19 @@ class TaskStatusDB(AbstractTaskStatusDB):
                                  f"{old_status} to {status}")
 
     def check_out_task(self):
-        # TODO: may need move this to a single attempt function and wrap it
-        # in while loop to catch NoStatusChange errors until we have a
-        # successful checkout
+        # we use a sentinel here because None is a valid value
+        sentinel = object()
+        taskid = sentinel
+        while taskid == sentinel:
+            try:
+                taskid = self._inner_check_out_task()
+            except NoStatusChange:
+                _logger.info("Attempted to take the same task as another "
+                             "worker. Trying again.")
 
+        return taskid
+
+    def _inner_check_out_task(self):
         # TODO: separate selection so subclasses can easily override;
         # something like `_select_task(conn: Connection) -> Row` (allow us
         # to do something smarter than "take the first available")
