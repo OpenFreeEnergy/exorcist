@@ -461,12 +461,14 @@ class TaskStatusDB(AbstractTaskStatusDB):
         # TODO: separate selection so subclasses can easily override;
         # something like `_select_task(conn: Connection) -> Row` (allow us
         # to do something smarter than "take the first available")
+        _logger.info("Checking out a new task")
         sel_stmt = (
             sqla.select(self.tasks_table)
             .where(self.tasks_table.c.status == TaskStatus.AVAILABLE.value)
         )
         with self.engine.begin() as conn:
             task_row = conn.execute(sel_stmt).first()
+            _logger.debug(f"Before claiming task: {task_row=}")
 
             if task_row is None:
                 # no tasks are available
@@ -481,9 +483,27 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
             self._validate_update_result(result)
 
+        # log the changed row if we're doing DEBUG logging
+        if _logger.isEnabledFor(logging.DEBUG):
+            reselect = (
+                sqla.select(self.tasks_table)
+                .where(self.tasks_table.c.taskid == task_row.taskid)
+            )
+            # read-only; use connect() (no autocommit)
+            with self.engine.connect() as conn:
+                reloaded = list(conn.execute(reselect).all())
+
+            assert len(reloaded) == 1, \
+                    f"Got {len(reloaded)} rows for '{task_row.taskid}'"
+
+            claimed = reloaded[0]
+            _logger.debug(f"After claiming task: {claimed=}")
+
+        _logger.info(f"Selected task '{task_row.taskid}'")
         return task_row.taskid
 
     def _mark_task_completed_failure(self, taskid: str):
+        _logger.info(f"Marking try of {taskid} as failed.")
         status_statement = sqla.case(
             (
                 self.tasks_table.c.tries >= self.tasks_table.c.max_tries,
@@ -502,7 +522,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
 
     def _mark_task_completed_success(self, taskid: str):
-        _logger.debug(f"Marking task '{taskid}' as successfully completed")
+        _logger.info(f"Marking task '{taskid}' as successfully completed")
         # TODO: there may be ways to make this faster; this is likely to be
         # the most important point for performance considerations
 
@@ -549,24 +569,24 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         # now we actually DO those steps
         with self.engine.begin() as conn:
-            _logger.debug("Setting task status to COMPLETED")
+            _logger.debug("* Setting task status to COMPLETED")
             completed_task = conn.execute(update_task_completed)
-            _logger.debug("Identifying candidates to unblock")
+            _logger.debug("* Identifying candidates to unblock")
             candidates = conn.execute(update_deps).fetchall()
             candidates = {c[0] for c in candidates}
-            _logger.debug("Identifying which candidates should unblocked")
+            _logger.debug("* Identifying which candidates should unblocked")
             blocked = conn.execute(
                 still_blocked, {"candidates": candidates}
             ).fetchall()
             blocked = {c[0] for c in blocked}
             to_unblock = candidates - blocked
             if to_unblock:
-                _logger.debug("Moving unblocked tasks to AVAILABLE")
+                _logger.debug("* Moving unblocked tasks to AVAILABLE")
                 unblocked = conn.execute(update_task_unblocked, [
                     {'unblock': unblock} for unblock in to_unblock
                 ])
             else:
-                _logger.debug("No tasks to unblock")
+                _logger.debug("* No tasks to unblock")
 
     def mark_task_completed(self, taskid: str, success: bool):
         if success:
