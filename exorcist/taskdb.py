@@ -482,7 +482,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             taskid = result[0][0]
         elif len(result) == 0:
             _logger.info("Unable to select an available task")
-           return None  # skip extra logging
+            return None  # skip extra logging
         else:  # -no-cov-
             raise RuntimeError(f"Received {len(result)} task IDs to check "
                                "out. Something went very weird.")
