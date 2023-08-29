@@ -44,9 +44,9 @@ jobs:
       - run: python -m pip install -e .
         name: "Install"
       - name: "Install database"
-        run: ./devtools/${{ sql-backend }}/install.sh
+        run: ./devtools/${{ matrix.sql-backend }}/install.sh
       - name: "Create and start database"
-        run: ./devtools/${{ sql-backend }}/create.sh
+        run: ./devtools/${{ matrix.sql-backend }}/create.sh
       - run: python -m pip install pytest pytest-cov
         name: "Install testing tools"
       - run: pytest -v --cov=exorcist --cov-report=xml
