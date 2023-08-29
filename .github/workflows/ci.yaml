@@ -30,8 +30,9 @@ jobs:
           - "3.10"
           - "3.11"
         include:
-          - python-version: "3.11"
+          - os: "ubuntu"
             sql-backend: "postgres"
+            python-version: "3.11"
 
     steps:
       - uses: actions/checkout@v3
@@ -49,9 +50,7 @@ jobs:
         run: ./devtools/${{ matrix.sql-backend }}/create.sh
       - run: python -m pip install pytest pytest-cov
         name: "Install testing tools"
-      - run: pytest -v --cov=exorcist --cov-report=xml
-        env:
-          EXORCIST_TEST_DB: ${{ matrix.sql-version }}
+      - run: EXORCIST_TEST_DB=${{ matrix.sql-version }} pytest -v --cov=exorcist --cov-report=xml
         name: "Run tests"
       - name: codecov
         if: ${{ github.repository == 'OpenFreeEnergy/exorcist'
