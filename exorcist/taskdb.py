@@ -49,6 +49,8 @@ class NoStatusChange(Exception):
 
 
 class AbstractTaskStatusDB(abc.ABC):
+    """Abstract class defining API for a task status database
+    """
     @abc.abstractmethod
     def add_task(self, taskid: str, requirements: Iterable[str],
                  max_tries: int):
@@ -164,10 +166,12 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
     @property
     def tasks_table(self):
+        """SQLAlchemy table for ``tasks``"""
         return self.metadata.tables['tasks']
 
     @property
     def dependencies_table(self):
+        """SQLAlchemy table for ``depedencies``"""
         return self.metadata.tables['dependencies']
 
     def get_all_tasks(self) -> Iterable[sqla.Row]:
