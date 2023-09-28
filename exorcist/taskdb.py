@@ -136,7 +136,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
     """Database for managing execution and orchestration of tasks.
 
     This implementation is built on SQLAlchemy. For simple usage, the
-    recommendation is to use the :method:`.from_filename` method to create
+    recommendation is to use the :meth:`.from_filename` method to create
     this object, rather than its ``__init__``. The ``__init__`` method takes
     a SQLAlchemy engine, which provides much more flexibility in choice of
     backend.
