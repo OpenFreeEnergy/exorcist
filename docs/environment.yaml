@@ -1,0 +1,9 @@
+name: exorcist-docs
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.9
+  - pip
+  - sphinx
+  - pip:
+    - git+https://github.com/OpenFreeEnergy/ofe-sphinx-theme@main
