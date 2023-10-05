@@ -3,6 +3,8 @@ from unittest import mock
 from exorcist import TaskStatusDB, NoStatusChange, TaskStatus
 from exorcist.taskdb import _logger as taskdb_logger
 
+import os
+import re
 import sqlalchemy as sqla
 import networkx as nx
 from datetime import datetime
@@ -73,9 +75,32 @@ def patch_datetime_now(with_datetime=_DEFAULT_DATETIME):
     return mock.patch(loc, datetime_now)
 
 @pytest.fixture
-def fresh_db():
+def db_connect_string():
+    db_type = os.environ.get("EXORCIST_TEST_DB", "sqlite")
+    connect_string = {
+        "sqlite": "sqlite://",
+        "postgres": "postgresql+psycopg://127.0.0.1:5432/exorcist_testdb",
+    }[db_type]
+    # print(f"USING {connect_string}")  # DEBUG
+    return connect_string
+
+@pytest.fixture
+def fresh_db(db_connect_string):
     echo = False  # switch this for debugging
-    return TaskStatusDB(sqla.create_engine("sqlite://", echo=echo))
+    engine = sqla.create_engine(db_connect_string, echo=echo)
+
+    if engine.name == "postgresql":
+        # force empty with DROP CASCADE
+        bobby = """
+        DROP TABLE IF EXISTS
+          tasks,
+          dependencies
+        CASCADE
+        """
+        with engine.begin() as conn:
+            conn.execute(sqla.text(bobby))
+
+    yield TaskStatusDB(engine)
 
 @pytest.fixture
 def loaded_db(fresh_db):
@@ -241,7 +266,8 @@ class TestTaskStatusDB:
         assert set(deps) == {("foo", "bar", True)}
 
     def test_add_task_before_requirements(self, fresh_db):
-        with pytest.raises(sqla.exc.IntegrityError, match="FOREIGN KEY"):
+        fk_regex = re.compile("foreign key", re.I)
+        with pytest.raises(sqla.exc.IntegrityError, match=fk_regex):
             fresh_db.add_task("bar", requirements=["foo"], max_tries=3)
 
         # check that task insertion got rolled back
