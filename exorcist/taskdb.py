@@ -49,6 +49,8 @@ class NoStatusChange(Exception):
 
 
 class AbstractTaskStatusDB(abc.ABC):
+    """Abstract class defining API for a task status database
+    """
     @abc.abstractmethod
     def add_task(self, taskid: str, requirements: Iterable[str],
                  max_tries: int):
@@ -136,7 +138,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
     """Database for managing execution and orchestration of tasks.
 
     This implementation is built on SQLAlchemy. For simple usage, the
-    recommendation is to use the :method:`.from_filename` method to create
+    recommendation is to use the :meth:`.from_filename` method to create
     this object, rather than its ``__init__``. The ``__init__`` method takes
     a SQLAlchemy engine, which provides much more flexibility in choice of
     backend.
@@ -164,10 +166,12 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
     @property
     def tasks_table(self):
+        """SQLAlchemy table for ``tasks``"""
         return self.metadata.tables['tasks']
 
     @property
     def dependencies_table(self):
+        """SQLAlchemy table for ``depedencies``"""
         return self.metadata.tables['dependencies']
 
     def get_all_tasks(self) -> Iterable[sqla.Row]:

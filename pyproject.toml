@@ -1,0 +1,35 @@
+[project]
+name = "exorcist"
+description = "Daemonless campaign-scale simulation orchestration "
+readme = "README.md"
+version = "0.1.0"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "The OpenFE developers", email = "openfreeenergy@omsf.io" }]
+urls = { "Homepage" = "https://github.com/OpenFreeEnergy/exorcist" }
+classifiers = [
+  "Development Status :: 1 - Planning",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3"
+]
+dependencies = [
+  "networkx",
+  "sqlalchemy"
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest"
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["exorcist*"]
+
+[tool.mypy]
+files = ["exorcist"]
+ignore_missing_imports = true
+
