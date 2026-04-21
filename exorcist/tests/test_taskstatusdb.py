@@ -76,6 +76,10 @@ def patch_datetime_now(with_datetime=_DEFAULT_DATETIME):
 
 @pytest.fixture
 def db_connect_string():
+    # defines the connection string for our test database; this is used by
+    # the fresh_db fixture, and is determined at runtime by the
+    # EXORCIST_TEST_DB environment variable (defaults to sqlite). Use this
+    # to change which database backend we test against.
     db_type = os.environ.get("EXORCIST_TEST_DB", "sqlite")
     connect_string = {
         "sqlite": "sqlite://",
@@ -86,6 +90,8 @@ def db_connect_string():
 
 @pytest.fixture
 def fresh_db(db_connect_string):
+    # create an empty database; for "real" (non-sqlite) databases, drop
+    # existing tables
     echo = False  # switch this for debugging
     engine = sqla.create_engine(db_connect_string, echo=echo)
 
@@ -104,11 +110,14 @@ def fresh_db(db_connect_string):
 
 @pytest.fixture
 def loaded_db(fresh_db):
+    # database with simple dependencies (foo blocks bar)
     add_mock_data(fresh_db.metadata, fresh_db.engine)
     return fresh_db
 
 @pytest.fixture
 def vshape_db(fresh_db):
+    # data for testing a "V" shape of dependencies (foo and bar both block
+    # baz)
     metadata = fresh_db.metadata
     engine = fresh_db.engine
     tasks = [
