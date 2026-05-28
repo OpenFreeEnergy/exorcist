@@ -10,7 +10,8 @@ import logging
 
 def create_database(metadata, engine, extra_table=False,
                     missing_table=False, extra_column=False,
-                    missing_column=False, bad_types=False):
+                    missing_column=False, bad_types=False,
+                    include_task_type=True):
     """
     Create databases with various imperfections on our schema.
     """
@@ -23,6 +24,8 @@ def create_database(metadata, engine, extra_table=False,
         sqla.Column("tries", sqla.Integer),
         sqla.Column("max_tries", sqla.Integer),
     ]
+    if include_task_type:
+        task_columns.append(sqla.Column("task_type", sqla.String))
     deps_columns = [
         sqla.Column("from", sqla.String, sqla.ForeignKey("tasks.taskid")),
         sqla.Column("to", sqla.String, sqla.ForeignKey("tasks.taskid")),
@@ -30,7 +33,9 @@ def create_database(metadata, engine, extra_table=False,
     ]
 
     if missing_column:
-        task_columns = task_columns[:-1]
+        task_columns = [
+            column for column in task_columns if column.name != "max_tries"
+        ]
     if extra_column:
         task_columns.append(sqla.Column("foo", sqla.String))
 
@@ -44,7 +49,12 @@ def create_database(metadata, engine, extra_table=False,
 
     metadata.create_all(bind=engine)
 
-def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE):
+def task_row(taskid, status, last_modified, tries, max_tries,
+             task_type=""):
+    return (taskid, status.value, last_modified, tries, max_tries, task_type)
+
+def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE,
+                  task_type=""):
     # add a couple of tasks for when we want to pretend we're opening an
     # existing file
     tasks = [
@@ -53,6 +63,9 @@ def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE):
         {'taskid': "bar", "status": TaskStatus.BLOCKED.value,
          'last_modified': None, 'tries': 0, 'max_tries': 3}
     ]
+    if "task_type" in metadata.tables["tasks"].c:
+        tasks[0]["task_type"] = task_type
+        tasks[1]["task_type"] = ""
     deps = [{'from': "foo", 'to': "bar", 'blocking': True}]
 
     ins_tasks = sqla.insert(metadata.tables['tasks']).values(tasks)
@@ -88,11 +101,14 @@ def vshape_db(fresh_db):
     engine = fresh_db.engine
     tasks = [
         {'taskid': "foo", "status": TaskStatus.AVAILABLE.value,
-         'last_modified': None, 'tries': 0, 'max_tries': 3},
+         'last_modified': None, 'tries': 0, 'max_tries': 3,
+         'task_type': ""},
         {'taskid': "bar", "status": TaskStatus.AVAILABLE.value,
-         'last_modified': None, 'tries': 0, 'max_tries': 3},
+         'last_modified': None, 'tries': 0, 'max_tries': 3,
+         'task_type': ""},
         {'taskid': "baz", "status": TaskStatus.BLOCKED.value,
-         'last_modified': None, 'tries': 0, 'max_tries': 3},
+         'last_modified': None, 'tries': 0, 'max_tries': 3,
+         'task_type': ""},
     ]
     deps = [{'from': "foo", 'to': "baz", 'blocking': True},
             {'from': "bar", 'to': "baz", 'blocking': True}]
@@ -131,6 +147,7 @@ class TestTaskStatusDB:
     def assert_is_our_db(db):
         assert len(db.metadata.tables) == 2
         assert set(db.metadata.tables) == {'tasks', 'dependencies'}
+        assert "task_type" in db.metadata.tables["tasks"].c
 
     @staticmethod
     def assert_is_fresh_db(db):
@@ -168,8 +185,8 @@ class TestTaskStatusDB:
             assert len(deps) == 1
             assert deps == {("foo", "bar", True)}
             assert tasks == {
-                ('foo', TaskStatus.AVAILABLE.value, None, 0, 3),
-                ('bar', TaskStatus.BLOCKED.value, None, 0, 3),
+                task_row('foo', TaskStatus.AVAILABLE, None, 0, 3),
+                task_row('bar', TaskStatus.BLOCKED, None, 0, 3),
             }
 
     # leaving this xfail for now because implementing the functionality
@@ -191,8 +208,8 @@ class TestTaskStatusDB:
     def test_tasks_table(self, request, fixture):
         expected = {
             'fresh_db': set(),
-            'loaded_db': {('foo', TaskStatus.AVAILABLE.value, None, 0, 3),
-                          ('bar', TaskStatus.BLOCKED.value, None, 0, 3)},
+            'loaded_db': {task_row('foo', TaskStatus.AVAILABLE, None, 0, 3),
+                          task_row('bar', TaskStatus.BLOCKED, None, 0, 3)},
         }[fixture]
         db = request.getfixturevalue(fixture)
         with db.engine.connect() as conn:
@@ -218,8 +235,8 @@ class TestTaskStatusDB:
     def test_get_all_tasks(self, request, fixture):
         expected = {
             'fresh_db': set(),
-            'loaded_db': {('foo', TaskStatus.AVAILABLE.value, None, 0, 3),
-                ('bar', TaskStatus.BLOCKED.value, None, 0, 3)},
+            'loaded_db': {task_row('foo', TaskStatus.AVAILABLE, None, 0, 3),
+                task_row('bar', TaskStatus.BLOCKED, None, 0, 3)},
         }[fixture]
         db = request.getfixturevalue(fixture)
         tasks = set(db.get_all_tasks())
@@ -228,7 +245,7 @@ class TestTaskStatusDB:
     def test_add_task(self, fresh_db):
         # task without prerequisites
         fresh_db.add_task("foo", requirements=[], max_tries=3)
-        expected_foo_task = ("foo", TaskStatus.AVAILABLE.value, None, 0, 3)
+        expected_foo_task = task_row("foo", TaskStatus.AVAILABLE, None, 0, 3)
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert set(tasks) == {expected_foo_task}
         assert set(deps) == set()
@@ -237,8 +254,16 @@ class TestTaskStatusDB:
         fresh_db.add_task("bar", requirements=['foo'], max_tries=3)
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert set(tasks) == {expected_foo_task,
-                              ("bar", TaskStatus.BLOCKED.value, None, 0, 3)}
+                              task_row("bar", TaskStatus.BLOCKED, None, 0, 3)}
         assert set(deps) == {("foo", "bar", True)}
+
+    def test_add_task_with_task_type(self, fresh_db):
+        fresh_db.add_task("gpu-task", requirements=[], max_tries=3,
+                          task_type="gpu")
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {task_row("gpu-task", TaskStatus.AVAILABLE, None,
+                                  0, 3, "gpu")}
+        assert deps == set()
 
     def test_add_task_before_requirements(self, fresh_db):
         with pytest.raises(sqla.exc.IntegrityError, match="FOREIGN KEY"):
@@ -251,10 +276,10 @@ class TestTaskStatusDB:
         fresh_db.add_task_network(diamond_taskid_network, max_tries=3)
         tasks, deps = get_tasks_and_deps(fresh_db)
         expected_tasks = {
-            ("A", TaskStatus.AVAILABLE.value, None, 0, 3),
-            ("B", TaskStatus.BLOCKED.value, None, 0, 3),
-            ("C", TaskStatus.BLOCKED.value, None, 0, 3),
-            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("A", TaskStatus.AVAILABLE, None, 0, 3),
+            task_row("B", TaskStatus.BLOCKED, None, 0, 3),
+            task_row("C", TaskStatus.BLOCKED, None, 0, 3),
+            task_row("D", TaskStatus.BLOCKED, None, 0, 3),
         }
         expected_deps = {("A", "B", True), ("A", "C", True),
                          ("B", "D", True), ("C", "D", True)}
@@ -262,6 +287,30 @@ class TestTaskStatusDB:
         assert set(deps) == expected_deps
         assert len(tasks) == len(expected_tasks)
         assert len(deps) == len(expected_deps)
+
+    def test_add_task_network_with_task_types(self, fresh_db,
+                                              diamond_taskid_network):
+        fresh_db.add_task_network(
+            diamond_taskid_network,
+            max_tries=3,
+            task_types={"A": "cpu", "D": "gpu"},
+        )
+        tasks, _ = get_tasks_and_deps(fresh_db)
+        assert tasks == {
+            task_row("A", TaskStatus.AVAILABLE, None, 0, 3, "cpu"),
+            task_row("B", TaskStatus.BLOCKED, None, 0, 3),
+            task_row("C", TaskStatus.BLOCKED, None, 0, 3),
+            task_row("D", TaskStatus.BLOCKED, None, 0, 3, "gpu"),
+        }
+
+    def test_add_task_network_unknown_task_type_key(self, fresh_db,
+                                                    diamond_taskid_network):
+        with pytest.raises(ValueError, match="unknown tasks"):
+            fresh_db.add_task_network(
+                diamond_taskid_network,
+                max_tries=3,
+                task_types={"missing": "gpu"},
+            )
 
     def test_task_row_update_statement(self, loaded_db):
         # TODO: I'm going to do this in a future PR
@@ -283,9 +332,27 @@ class TestTaskStatusDB:
         assert foo.status == TaskStatus.IN_PROGRESS.value
         assert foo.tries == 1
         assert foo.max_tries == 3
+        assert foo.task_type == ""
 
-        assert bar == ("bar", TaskStatus.BLOCKED.value, None, 0, 3)
+        assert bar == task_row("bar", TaskStatus.BLOCKED, None, 0, 3)
         taskdb_logger.setLevel(logging.NOTSET)
+
+    def test_task_type_preserved_through_checkout_and_completion(self,
+                                                                 fresh_db):
+        fresh_db.add_task("gpu-task", requirements=[], max_tries=3,
+                          task_type="gpu")
+
+        with patch_datetime_now():
+            taskid = fresh_db.check_out_task()
+        assert taskid == "gpu-task"
+
+        with patch_datetime_now():
+            fresh_db.mark_task_completed(taskid, success=True)
+
+        tasks, deps = get_tasks_and_deps(fresh_db)
+        assert tasks == {task_row("gpu-task", TaskStatus.COMPLETED,
+                                  _DEFAULT_DATETIME, 1, 3, "gpu")}
+        assert deps == set()
 
     def test_check_out_task_double_checkout(self, loaded_db):
         taskid = loaded_db.check_out_task()
@@ -316,8 +383,8 @@ class TestTaskStatusDB:
         # assert that our initial conditions are as expected
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("foo", TaskStatus.IN_PROGRESS.value, None, 1, 3),
-            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("foo", TaskStatus.IN_PROGRESS, None, 1, 3),
+            task_row("bar", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("foo", "bar", True)}
 
@@ -326,8 +393,8 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("foo", TaskStatus.AVAILABLE.value, _DEFAULT_DATETIME, 1, 3),
-            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("foo", TaskStatus.AVAILABLE, _DEFAULT_DATETIME, 1, 3),
+            task_row("bar", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("foo", "bar", True)}
 
@@ -337,8 +404,8 @@ class TestTaskStatusDB:
         # assert that our initial conditions are as expected
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("foo", TaskStatus.IN_PROGRESS.value, None, 3, 3),
-            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("foo", TaskStatus.IN_PROGRESS, None, 3, 3),
+            task_row("bar", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("foo", "bar", True)}
 
@@ -347,9 +414,9 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("foo", TaskStatus.TOO_MANY_RETRIES.value, _DEFAULT_DATETIME,
-             3, 3),
-            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("foo", TaskStatus.TOO_MANY_RETRIES, _DEFAULT_DATETIME,
+                     3, 3),
+            task_row("bar", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("foo", "bar", True)}
 
@@ -366,9 +433,9 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("foo", TaskStatus.TOO_MANY_RETRIES.value, _DEFAULT_DATETIME,
-             5, 3),
-            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("foo", TaskStatus.TOO_MANY_RETRIES, _DEFAULT_DATETIME,
+                     5, 3),
+            task_row("bar", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("foo", "bar", True)}
 
@@ -377,8 +444,8 @@ class TestTaskStatusDB:
                       status=TaskStatus.IN_PROGRESS, tries=1)
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("foo", TaskStatus.IN_PROGRESS.value, None, 1, 3),
-            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("foo", TaskStatus.IN_PROGRESS, None, 1, 3),
+            task_row("bar", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("foo", "bar", True)}
 
@@ -387,8 +454,8 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("foo", TaskStatus.COMPLETED.value, _DEFAULT_DATETIME, 1, 3),
-            ("bar", TaskStatus.AVAILABLE.value, _DEFAULT_DATETIME, 0, 3)
+            task_row("foo", TaskStatus.COMPLETED, _DEFAULT_DATETIME, 1, 3),
+            task_row("bar", TaskStatus.AVAILABLE, _DEFAULT_DATETIME, 0, 3),
         }
         assert deps == {("foo", "bar", False)}
 
@@ -399,10 +466,10 @@ class TestTaskStatusDB:
         fresh_db.add_task_network(diamond_taskid_network, max_tries=3)
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.AVAILABLE.value, None, 0, 3),
-            ("B", TaskStatus.BLOCKED.value, None, 0, 3),
-            ("C", TaskStatus.BLOCKED.value, None, 0, 3),
-            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("A", TaskStatus.AVAILABLE, None, 0, 3),
+            task_row("B", TaskStatus.BLOCKED, None, 0, 3),
+            task_row("C", TaskStatus.BLOCKED, None, 0, 3),
+            task_row("D", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("A", "B", True), ("A", "C", True),
                         ("B", "D", True), ("C", "D", True)}
@@ -414,10 +481,10 @@ class TestTaskStatusDB:
         assert sel1 == "A"
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.IN_PROGRESS.value, datetime_sel1, 1, 3),
-            ("B", TaskStatus.BLOCKED.value, None, 0, 3),
-            ("C", TaskStatus.BLOCKED.value, None, 0, 3),
-            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("A", TaskStatus.IN_PROGRESS, datetime_sel1, 1, 3),
+            task_row("B", TaskStatus.BLOCKED, None, 0, 3),
+            task_row("C", TaskStatus.BLOCKED, None, 0, 3),
+            task_row("D", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("A", "B", True), ("A", "C", True),
                         ("B", "D", True), ("C", "D", True)}
@@ -429,10 +496,10 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
-            ("B", TaskStatus.AVAILABLE.value, datetime_fin1, 0, 3),
-            ("C", TaskStatus.AVAILABLE.value, datetime_fin1, 0, 3),
-            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("A", TaskStatus.COMPLETED, datetime_fin1, 1, 3),
+            task_row("B", TaskStatus.AVAILABLE, datetime_fin1, 0, 3),
+            task_row("C", TaskStatus.AVAILABLE, datetime_fin1, 0, 3),
+            task_row("D", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("A", "B", False), ("A", "C", False),
                         ("B", "D", True), ("C", "D", True)}
@@ -445,10 +512,10 @@ class TestTaskStatusDB:
         sel3 = {"B": "C", "C": "B"}[sel2]  # KeyError means bad sel2 value
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
-            (sel2, TaskStatus.IN_PROGRESS.value, datetime_sel2, 1, 3),
-            (sel3, TaskStatus.AVAILABLE.value, datetime_fin1, 0, 3),
-            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("A", TaskStatus.COMPLETED, datetime_fin1, 1, 3),
+            task_row(sel2, TaskStatus.IN_PROGRESS, datetime_sel2, 1, 3),
+            task_row(sel3, TaskStatus.AVAILABLE, datetime_fin1, 0, 3),
+            task_row("D", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("A", "B", False), ("A", "C", False),
                         ("B", "D", True), ("C", "D", True)}
@@ -460,10 +527,10 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
-            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
-            (sel3, TaskStatus.AVAILABLE.value, datetime_fin1, 0, 3),
-            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("A", TaskStatus.COMPLETED, datetime_fin1, 1, 3),
+            task_row(sel2, TaskStatus.COMPLETED, datetime_fin2, 1, 3),
+            task_row(sel3, TaskStatus.AVAILABLE, datetime_fin1, 0, 3),
+            task_row("D", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("A", "B", False), ("A", "C", False),
                         (sel2, "D", False), (sel3, "D", True)}
@@ -478,10 +545,10 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
-            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
-            (sel3, TaskStatus.IN_PROGRESS.value, datetime_sel3, 1, 3),
-            ("D", TaskStatus.BLOCKED.value, None, 0, 3),
+            task_row("A", TaskStatus.COMPLETED, datetime_fin1, 1, 3),
+            task_row(sel2, TaskStatus.COMPLETED, datetime_fin2, 1, 3),
+            task_row(sel3, TaskStatus.IN_PROGRESS, datetime_sel3, 1, 3),
+            task_row("D", TaskStatus.BLOCKED, None, 0, 3),
         }
         assert deps == {("A", "B", False), ("A", "C", False),
                         (sel2, "D", False), (sel3, "D", True)}
@@ -493,10 +560,10 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
-            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
-            (sel3, TaskStatus.COMPLETED.value, datetime_fin3, 1, 3),
-            ("D", TaskStatus.AVAILABLE.value, datetime_fin3, 0, 3),
+            task_row("A", TaskStatus.COMPLETED, datetime_fin1, 1, 3),
+            task_row(sel2, TaskStatus.COMPLETED, datetime_fin2, 1, 3),
+            task_row(sel3, TaskStatus.COMPLETED, datetime_fin3, 1, 3),
+            task_row("D", TaskStatus.AVAILABLE, datetime_fin3, 0, 3),
         }
         assert deps == {("A", "B", False), ("A", "C", False),
                         (sel2, "D", False), (sel3, "D", False)}
@@ -509,10 +576,10 @@ class TestTaskStatusDB:
         assert sel4 == "D"
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
-            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
-            (sel3, TaskStatus.COMPLETED.value, datetime_fin3, 1, 3),
-            ("D", TaskStatus.IN_PROGRESS.value, datetime_sel4, 1, 3),
+            task_row("A", TaskStatus.COMPLETED, datetime_fin1, 1, 3),
+            task_row(sel2, TaskStatus.COMPLETED, datetime_fin2, 1, 3),
+            task_row(sel3, TaskStatus.COMPLETED, datetime_fin3, 1, 3),
+            task_row("D", TaskStatus.IN_PROGRESS, datetime_sel4, 1, 3),
         }
         assert deps == {("A", "B", False), ("A", "C", False),
                         ("B", "D", False), ("C", "D", False)}
@@ -524,10 +591,10 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
-            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
-            (sel3, TaskStatus.COMPLETED.value, datetime_fin3, 1, 3),
-            ("D", TaskStatus.COMPLETED.value, datetime_fin4, 1, 3),
+            task_row("A", TaskStatus.COMPLETED, datetime_fin1, 1, 3),
+            task_row(sel2, TaskStatus.COMPLETED, datetime_fin2, 1, 3),
+            task_row(sel3, TaskStatus.COMPLETED, datetime_fin3, 1, 3),
+            task_row("D", TaskStatus.COMPLETED, datetime_fin4, 1, 3),
         }
         assert deps == {("A", "B", False), ("A", "C", False),
                         ("B", "D", False), ("C", "D", False)}
@@ -537,11 +604,10 @@ class TestTaskStatusDB:
         assert sel5 is None
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            ("A", TaskStatus.COMPLETED.value, datetime_fin1, 1, 3),
-            (sel2, TaskStatus.COMPLETED.value, datetime_fin2, 1, 3),
-            (sel3, TaskStatus.COMPLETED.value, datetime_fin3, 1, 3),
-            ("D", TaskStatus.COMPLETED.value, datetime_fin4, 1, 3),
+            task_row("A", TaskStatus.COMPLETED, datetime_fin1, 1, 3),
+            task_row(sel2, TaskStatus.COMPLETED, datetime_fin2, 1, 3),
+            task_row(sel3, TaskStatus.COMPLETED, datetime_fin3, 1, 3),
+            task_row("D", TaskStatus.COMPLETED, datetime_fin4, 1, 3),
         }
         assert deps == {("A", "B", False), ("A", "C", False),
                         ("B", "D", False), ("C", "D", False)}
-
