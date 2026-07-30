@@ -305,7 +305,7 @@ class TestTaskStatusDB:
 
     def test_add_task_network_unknown_task_type_key(self, fresh_db,
                                                     diamond_taskid_network):
-        with pytest.raises(ValueError, match="unknown tasks"):
+        with pytest.raises(ValueError, match=r"unknown tasks: \[\'missing\'\]"):
             fresh_db.add_task_network(
                 diamond_taskid_network,
                 max_tries=3,
