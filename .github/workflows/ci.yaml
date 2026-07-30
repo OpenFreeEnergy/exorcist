@@ -38,7 +38,7 @@ jobs:
       # compatiblity
       - uses: mamba-org/setup-micromamba@v3
         with:
-          environment_name: exorcist_env
+          environment-name: exorcist_env
           create-args: >-
             python=${{ matrix.python-version }}
       - run: python -m pip install -e .
