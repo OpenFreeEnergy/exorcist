@@ -160,6 +160,67 @@ def diamond_taskid_network():
     graph.add_edges_from([("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")])
     return graph
 
+
+class RecordingTaskStatusDB(TaskStatusDB):
+    def _record_hook(self, conn, hook_name):
+        assert conn.in_transaction()
+        conn.execute(
+            sqla.insert(self.audit_table).values(event=hook_name)
+        )
+
+    def _add_task(self, conn, taskid, requirements, max_tries):
+        self._record_hook(conn, "_add_task")
+        return super()._add_task(conn, taskid, requirements, max_tries)
+
+    def _add_task_network(self, conn, taskid_network, max_tries):
+        self._record_hook(conn, "_add_task_network")
+        return super()._add_task_network(conn, taskid_network, max_tries)
+
+    def _insert_task_and_deps_data(self, conn, task_data, deps_data):
+        self._record_hook(conn, "_insert_task_and_deps_data")
+        return super()._insert_task_and_deps_data(conn, task_data, deps_data)
+
+    def _check_out_task(self, conn):
+        self._record_hook(conn, "_check_out_task")
+        return super()._check_out_task(conn)
+
+    def _mark_task_completed_success(self, conn, taskid):
+        self._record_hook(conn, "_mark_task_completed_success")
+        return super()._mark_task_completed_success(conn, taskid)
+
+    def _mark_task_completed_failure(self, conn, taskid):
+        self._record_hook(conn, "_mark_task_completed_failure")
+        return super()._mark_task_completed_failure(conn, taskid)
+
+
+class FailingCheckoutTaskStatusDB(TaskStatusDB):
+    def _check_out_task(self, conn):
+        super()._check_out_task(conn)
+        assert conn.in_transaction()
+        conn.execute(
+            sqla.insert(self.audit_table).values(event="_check_out_task")
+        )
+        raise RuntimeError("rollback checkout")
+
+
+def make_audited_db(cls=RecordingTaskStatusDB):
+    db = cls(sqla.create_engine("sqlite://"))
+    db.audit_table = sqla.Table(
+        "audit",
+        db.metadata,
+        sqla.Column("id", sqla.Integer, primary_key=True),
+        sqla.Column("event", sqla.String),
+    )
+    db.audit_table.create(bind=db.engine)
+    return db
+
+
+def get_audit_events(db):
+    query = sqla.select(db.audit_table.c.event).order_by(db.audit_table.c.id)
+    with db.engine.connect() as conn:
+        return [row.event for row in conn.execute(query)]
+
+
 class TestTaskStatusDB:
     @staticmethod
     def assert_is_our_db(db):
@@ -297,6 +358,51 @@ class TestTaskStatusDB:
         assert set(deps) == expected_deps
         assert len(tasks) == len(expected_tasks)
         assert len(deps) == len(expected_deps)
+
+    def test_subclass_hooks_run_inside_transactions(self):
+        db = make_audited_db()
+        db.add_task("foo", requirements=[], max_tries=3)
+        db.add_task("bar", requirements=["foo"], max_tries=3)
+        assert db.check_out_task() == "foo"
+        db.mark_task_completed("foo", success=True)
+        assert db.check_out_task() == "bar"
+        db.mark_task_completed("bar", success=False)
+
+        assert get_audit_events(db) == [
+            "_add_task",
+            "_insert_task_and_deps_data",
+            "_add_task",
+            "_insert_task_and_deps_data",
+            "_check_out_task",
+            "_mark_task_completed_success",
+            "_check_out_task",
+            "_mark_task_completed_failure",
+        ]
+
+    def test_subclass_add_task_network_hook_runs_inside_transaction(
+            self, diamond_taskid_network):
+        db = make_audited_db()
+        db.add_task_network(diamond_taskid_network, max_tries=3)
+
+        assert get_audit_events(db) == [
+            "_add_task_network",
+            "_insert_task_and_deps_data",
+        ]
+
+    def test_subclass_hook_changes_roll_back_with_task_mutation(self):
+        db = make_audited_db(FailingCheckoutTaskStatusDB)
+        add_mock_data(db.metadata, db.engine)
+
+        with pytest.raises(RuntimeError, match="rollback checkout"):
+            db.check_out_task()
+
+        tasks, deps = get_tasks_and_deps(db)
+        assert tasks == {
+            ("foo", TaskStatus.AVAILABLE.value, None, 0, 3),
+            ("bar", TaskStatus.BLOCKED.value, None, 0, 3),
+        }
+        assert deps == {("foo", "bar", True)}
+        assert get_audit_events(db) == []
 
     def test_task_row_update_statement(self, loaded_db):
         # TODO: I'm going to do this in a future PR
@@ -579,4 +685,3 @@ class TestTaskStatusDB:
         }
         assert deps == {("A", "B", False), ("A", "C", False),
                         ("B", "D", False), ("C", "D", False)}
-
