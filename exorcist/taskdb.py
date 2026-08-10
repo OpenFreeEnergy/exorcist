@@ -6,7 +6,7 @@ from datetime import datetime
 import logging
 
 # imports for typing
-from typing import Optional, Iterable, Union
+from typing import Optional, Iterable, Union, Mapping
 from os import PathLike
 from sqlalchemy.sql.roles import StatementRole as SQLStatement
 
@@ -53,7 +53,7 @@ class AbstractTaskStatusDB(abc.ABC):
     """
     @abc.abstractmethod
     def add_task(self, taskid: str, requirements: Iterable[str],
-                 max_tries: int):
+                 max_tries: int, task_type: str = ""):
         """Add a task to the database.
 
         Parameters
@@ -66,11 +66,18 @@ class AbstractTaskStatusDB(abc.ABC):
         max_tries: int
             the maximum number of trials for this task (this is total
             tries, so retries + 1)
+        task_type: str
+            application-defined task type metadata for downstream routing
         """
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def add_task_network(self, task_network: nx.DiGraph, max_tries: int):
+    def add_task_network(
+        self,
+        task_network: nx.DiGraph,
+        max_tries: int,
+        task_types: Optional[Mapping[str, str]] = None,
+    ):
         """Add a network of tasks to the database.
 
         Parameters
@@ -82,6 +89,8 @@ class AbstractTaskStatusDB(abc.ABC):
         max_tries: int
             the maximum number of trials for these tasks (this is total
             tries, so retries + 1)
+        task_types: Optional[Mapping[str, str]]
+            optional application-defined task type metadata keyed by taskid
         """
         raise NotImplementedError()
 
@@ -231,6 +240,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             sqla.Column("last_modified", sqla.DateTime),
             sqla.Column("tries", sqla.Integer),
             sqla.Column("max_tries", sqla.Integer),
+            sqla.Column("task_type", sqla.String, default=""),
         )
         deps_table = sqla.Table(
             "dependencies",
@@ -244,7 +254,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
     @staticmethod
     def _get_task_and_dep_data(taskid: str, requirements: Iterable[str],
-                               max_tries: int):
+                               max_tries: int, task_type: str = ""):
         """Create a dicts with database info based on a task to add.
 
         Parameters
@@ -258,6 +268,8 @@ class TaskStatusDB(AbstractTaskStatusDB):
         max_tries: int
             the maximum number of trials for this task (this is total
             tries, so retries + 1)
+        task_type: str
+            application-defined task type metadata for downstream routing
 
         Returns
         -------
@@ -269,6 +281,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             * 'last_modified': datetime | None
             * 'tries': int
             * 'max_tries': int
+            * 'task_type': str
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
@@ -284,7 +297,8 @@ class TaskStatusDB(AbstractTaskStatusDB):
             'status': stat.value,
             'last_modified': None,
             'tries': 0,
-            'max_tries': max_tries
+            'max_tries': max_tries,
+            'task_type': task_type,
         }
 
         deps_data = [
@@ -313,6 +327,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             * 'last_modified': datetime | None
             * 'tries': int
             * 'max_tries': int
+            * 'task_type': str
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
@@ -330,7 +345,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
                 res2 = conn.execute(deps_ins)
 
     def add_task(self, taskid: str, requirements: Iterable[str],
-                 max_tries: int):
+                 max_tries: int, task_type: str = ""):
         """Add a task to the database.
 
         Parameters
@@ -343,12 +358,19 @@ class TaskStatusDB(AbstractTaskStatusDB):
         max_tries: int
             the maximum number of trials for this task (this is total
             tries, so retries + 1)
+        task_type: str
+            application-defined task type metadata for downstream routing
         """
         task_data, deps = self._get_task_and_dep_data(taskid, requirements,
-                                                      max_tries)
+                                                      max_tries, task_type)
         self._insert_task_and_deps_data(task_data, deps)
 
-    def add_task_network(self, taskid_network: nx.DiGraph, max_tries: int):
+    def add_task_network(
+        self,
+        taskid_network: nx.DiGraph,
+        max_tries: int,
+        task_types: Optional[Mapping[str, str]] = None,
+    ):
         """Add a network of tasks to the database.
 
         Parameters
@@ -360,10 +382,18 @@ class TaskStatusDB(AbstractTaskStatusDB):
         max_tries: int
             the maximum number of trials for these tasks (this is total
             tries, so retries + 1)
+        task_types: Optional[Mapping[str, str]]
+            optional application-defined task type metadata keyed by taskid
         """
+        task_types = {} if task_types is None else dict(task_types)
+        unknown_tasks = set(task_types) - set(taskid_network.nodes)
+        if unknown_tasks:
+            raise ValueError("Received task types for unknown tasks: "
+                             + str(sorted(unknown_tasks)))
+
         all_data = [
             self._get_task_and_dep_data(node, taskid_network.pred[node],
-                                        max_tries)
+                                        max_tries, task_types.get(node, ""))
             for node in nx.topological_sort(taskid_network)
         ]
         tasklists, deplists = zip(*all_data)

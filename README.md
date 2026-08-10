@@ -26,7 +26,9 @@ The tasks table is the main thing you'll be interested in. It has columns for
 the task ID (a string labeling the task), the task status (see
 [models.py](https://github.com/OpenFreeEnergy/exorcist/blob/main/exorcist/models.py)),
 last modified (which will be not-a-time until the first update), the number of
-tries so far, and the maximum number tries allowed.
+tries so far, the maximum number tries allowed, and a `task_type` string for
+application-defined routing metadata. Exorcist stores `task_type`, but does not
+interpret or validate its values.
 
 The dependencies table gives details on the dependencies in the DAG. Each entry
 in this table has a task ID for the "from" side of the edge and the "to" side
