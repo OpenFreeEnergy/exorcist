@@ -1,4 +1,5 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14740961.svg)](https://doi.org/10.5281/zenodo.14740961)
+[![documentation](https://app.readthedocs.org/projects/exorcist/badge/?version=latest)](https://app.readthedocs.org/projects/exorcist/badge/?version=latest)]
 
 # exorcist
 Daemonless campaign-scale simulation orchestration.
