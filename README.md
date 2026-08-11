@@ -27,22 +27,3 @@ of the edge, as well as a boolean "blocking" column. The "from" task must be
 completed before the "to" task can begin. When the "from" task has been
 completed, the entry should be updated so the "blocking" is False.
 
-### Micro-dashboard (pandas DataFrame)
-
-Eventually, we expect to develop a useful dashboard. Until then, the most
-convenient way for users to get an overview of the task status database is by
-using `pandas` (version 2.0 or greater):
-
-```python
-import pandas as pd
-from exorcist import TaskStatusDB
-
-db = TaskStatusDB.from_filename("path/to/my/database.db")
-tasks = pd.read_sql_table("tasks", db.engine)
-deps = pd.read_sql_table("dependencies", db.engine)
-```
-
-NOTE: `pandas` is not in the `exorcist` requirement stack, so you may need to
-install it separately.
-
-
