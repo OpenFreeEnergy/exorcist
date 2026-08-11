@@ -1,7 +1,12 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14740961.svg)](https://doi.org/10.5281/zenodo.14740961)
 
 # exorcist
-Daemonless campaign-scale simulation orchestration
+Daemonless campaign-scale simulation orchestration.
+
+## Why exorcist
+There are many orchestration tools for tasks.
+Solutions like [alchemiscale](https://alchemiscale.org/) enable execution of large alchemical networks but requires [running separate infrastructure](https://docs.alchemiscale.org/en/latest/deployment.html).
+This project aims to remove this barrier for most users by providing an open and lightweight library for building out simple task orchestration while still allowing for scaling to larger orchestration in the future.
 
 
 ### Micro-dashboard (pandas DataFrame)
