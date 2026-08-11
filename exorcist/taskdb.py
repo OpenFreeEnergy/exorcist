@@ -49,11 +49,16 @@ class NoStatusChange(Exception):
 
 
 class AbstractTaskStatusDB(abc.ABC):
-    """Abstract class defining API for a task status database
-    """
+    """Abstract class defining API for a task status database"""
+
     @abc.abstractmethod
-    def add_task(self, taskid: str, requirements: Iterable[str],
-                 max_tries: int, task_type: str = ""):
+    def add_task(
+        self,
+        taskid: str,
+        requirements: Iterable[str],
+        max_tries: int,
+        task_type: str = "",
+    ):
         """Add a task to the database.
 
         Parameters
@@ -152,10 +157,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
     a SQLAlchemy engine, which provides much more flexibility in choice of
     backend.
     """
+
     def __init__(self, engine: sqla.Engine):
-        if (
-            engine.name == "sqlite"
-            and not sqla.event.contains(engine, "connect", _sqlite_fk_pragma)
+        if engine.name == "sqlite" and not sqla.event.contains(
+            engine, "connect", _sqlite_fk_pragma
         ):
             sqla.event.listen(engine, "connect", _sqlite_fk_pragma)
 
@@ -164,8 +169,9 @@ class TaskStatusDB(AbstractTaskStatusDB):
         if self._is_empty_db(metadata):
             self._create_empty_db(metadata, engine)
         elif not self._is_our_db(metadata):
-            raise RuntimeError(f"Database at {engine} does not seem "
-                               "to be a task database")
+            raise RuntimeError(
+                f"Database at {engine} does not seem to be a task database"
+            )
 
         self.metadata = metadata
         self.engine = engine
@@ -176,12 +182,17 @@ class TaskStatusDB(AbstractTaskStatusDB):
     @property
     def tasks_table(self):
         """SQLAlchemy table for ``tasks``"""
-        return self.metadata.tables['tasks']
+        return self.metadata.tables["tasks"]
 
     @property
     def dependencies_table(self):
         """SQLAlchemy table for ``depedencies``"""
-        return self.metadata.tables['dependencies']
+        return self.metadata.tables["dependencies"]
+
+    @property
+    def task_types_table(self):
+        """SQLAlchemy table for ``task_types``"""
+        return self.metadata.tables["task_types"]
 
     def get_all_tasks(self) -> Iterable[sqla.Row]:
         """Yield current row for all tasks.
@@ -194,8 +205,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
             yield from conn.execute(sqla.select(self.tasks_table)).all()
 
     @classmethod
-    def from_filename(cls, filename: PathLike, *, overwrite: bool = False,
-                    **kwargs):
+    def from_filename(cls, filename: PathLike, *, overwrite: bool = False, **kwargs):
         """Create an sqlite dialect database from a filename.
 
         Parameters
@@ -240,7 +250,6 @@ class TaskStatusDB(AbstractTaskStatusDB):
             sqla.Column("last_modified", sqla.DateTime),
             sqla.Column("tries", sqla.Integer),
             sqla.Column("max_tries", sqla.Integer),
-            sqla.Column("task_type", sqla.String, default=""),
         )
         deps_table = sqla.Table(
             "dependencies",
@@ -249,12 +258,19 @@ class TaskStatusDB(AbstractTaskStatusDB):
             sqla.Column("to", sqla.String, sqla.ForeignKey("tasks.taskid")),
             sqla.Column("blocking", sqla.Boolean),
         )
+        types_table = sqla.Table(
+            "task_types",
+            metadata,
+            sqla.Column("taskid", sqla.String, sqla.ForeignKey("tasks.taskid")),
+            sqla.Column("type", sqla.String),
+        )
         # TODO: create indices that may be needed for performance
         metadata.create_all(bind=engine)
 
     @staticmethod
-    def _get_task_and_dep_data(taskid: str, requirements: Iterable[str],
-                               max_tries: int, task_type: str = ""):
+    def _get_task_and_dep_data(
+        taskid: str, requirements: Iterable[str], max_tries: int, task_type: str = ""
+    ):
         """Create a dicts with database info based on a task to add.
 
         Parameters
@@ -290,24 +306,28 @@ class TaskStatusDB(AbstractTaskStatusDB):
             complete before the 'to' task. The for 'blocking' is a boolean
             which indicates whether this dependency is still blocking
             (namely, whether the 'from' task has completed successfully).
+
+        type_data: Optional[Dict]
+            Dict containing the type and taskid
         """
         stat = TaskStatus.BLOCKED if requirements else TaskStatus.AVAILABLE
         task_data = {
-            'taskid': taskid,
-            'status': stat.value,
-            'last_modified': None,
-            'tries': 0,
-            'max_tries': max_tries,
-            'task_type': task_type,
+            "taskid": taskid,
+            "status": stat.value,
+            "last_modified": None,
+            "tries": 0,
+            "max_tries": max_tries,
         }
 
         deps_data = [
-            {'from': req, 'to': taskid, 'blocking': True}
-            for req in requirements
+            {"from": req, "to": taskid, "blocking": True} for req in requirements
         ]
-        return [task_data], deps_data
+        if task_type == "":
+            return [task_data], deps_data, None
+        task_type_data = {"taskid": taskid, "task_type": task_type}
+        return ([task_data], deps_data, task_type_data)
 
-    def _insert_task_and_deps_data(self, task_data, deps_data):
+    def _insert_task_and_deps_data(self, task_data, deps_data, task_type_data):
         """Insert data into database.
 
         This performs the actual insertion of task data into a database
@@ -335,17 +355,28 @@ class TaskStatusDB(AbstractTaskStatusDB):
             'to' are the taskid strings of tasks, where the 'from' task must
             complete before the 'to' task. The for 'blocking' is a boolean
             which indicates whether this dependency is still blocking
+
+        task_type_data: Optional[Dict]
+            an optional task_type
         """
         task_ins = sqla.insert(self.tasks_table).values(task_data)
         deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
+        task_type_ins = sqla.insert(self.task_types_table).values(task_type_data)
 
         with self.engine.begin() as conn:
             res1 = conn.execute(task_ins)
             if deps_data:  # don't insert on empty deps
                 res2 = conn.execute(deps_ins)
+            if task_type_data:
+                res3 = conn.execute(task_type_ins)
 
-    def add_task(self, taskid: str, requirements: Iterable[str],
-                 max_tries: int, task_type: str = ""):
+    def add_task(
+        self,
+        taskid: str,
+        requirements: Iterable[str],
+        max_tries: int,
+        task_type: str = "",
+    ):
         """Add a task to the database.
 
         Parameters
@@ -361,9 +392,10 @@ class TaskStatusDB(AbstractTaskStatusDB):
         task_type: str
             application-defined task type metadata for downstream routing
         """
-        task_data, deps = self._get_task_and_dep_data(taskid, requirements,
-                                                      max_tries, task_type)
-        self._insert_task_and_deps_data(task_data, deps)
+        task_data, deps, task_type_data = self._get_task_and_dep_data(
+            taskid, requirements, max_tries, task_type
+        )
+        self._insert_task_and_deps_data(task_data, deps, task_type_data)
 
     def add_task_network(
         self,
@@ -388,12 +420,14 @@ class TaskStatusDB(AbstractTaskStatusDB):
         task_types = {} if task_types is None else dict(task_types)
         unknown_tasks = set(task_types) - set(taskid_network.nodes)
         if unknown_tasks:
-            raise ValueError("Received task types for unknown tasks: "
-                             + str(sorted(unknown_tasks)))
+            raise ValueError(
+                "Received task types for unknown tasks: " + str(sorted(unknown_tasks))
+            )
 
         all_data = [
-            self._get_task_and_dep_data(node, taskid_network.pred[node],
-                                        max_tries, task_types.get(node, ""))
+            self._get_task_and_dep_data(
+                node, taskid_network.pred[node], max_tries, task_types.get(node, "")
+            )
             for node in nx.topological_sort(taskid_network)
         ]
         tasklists, deplists = zip(*all_data)
@@ -439,10 +473,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
         --------
         _validate_update_result : validate result from statement's execution
         """
-        stmt = (
-            sqla.update(self.tasks_table)
-            .where(self.tasks_table.c.taskid == taskid)
-        )
+        stmt = sqla.update(self.tasks_table).where(self.tasks_table.c.taskid == taskid)
 
         if isinstance(status, TaskStatus):
             status = status.value
@@ -452,15 +483,15 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         # create a dict of values to update
         values = {
-            'status': status,
-            'last_modified': datetime.now(),
+            "status": status,
+            "last_modified": datetime.now(),
         }
 
         if is_checkout:
-            values['tries'] = self.tasks_table.c.tries + 1
+            values["tries"] = self.tasks_table.c.tries + 1
 
         if max_tries is not None:
-            values['max_tries'] = max_tries
+            values["max_tries"] = max_tries
 
         stmt = stmt.values(**values)
         return stmt
@@ -480,12 +511,15 @@ class TaskStatusDB(AbstractTaskStatusDB):
             The update couldn't happen. This likely means that the database
             allowed another process to mark the task as the updated status.
         """
-        if result.rowcount > 1: # -no-cov-
-            raise RuntimeError("Database seems to have more than 1 row with"
-                               f"taskid '{taskid}'. This should not happen.")
+        if result.rowcount > 1:  # -no-cov-
+            raise RuntimeError(
+                "Database seems to have more than 1 row with"
+                f"taskid '{taskid}'. This should not happen."
+            )
         elif result.rowcount == 0:
-            raise NoStatusChange(f"Task '{taskid}' could not change from "
-                                 f"{old_status} to {status}")
+            raise NoStatusChange(
+                f"Task '{taskid}' could not change from {old_status} to {status}"
+            )
 
     def check_out_task(self):
         # TODO: may need move this to a single attempt function and wrap it
@@ -514,21 +548,21 @@ class TaskStatusDB(AbstractTaskStatusDB):
             _logger.info("Unable to select an available task")
             return None  # skip extra logging
         else:  # -no-cov-
-            raise RuntimeError(f"Received {len(result)} task IDs to check "
-                               "out. Something went very weird.")
+            raise RuntimeError(
+                f"Received {len(result)} task IDs to check "
+                "out. Something went very weird."
+            )
 
         # log the changed row if we're doing DEBUG logging
         if _logger.isEnabledFor(logging.DEBUG):
-            reselect = (
-                sqla.select(self.tasks_table)
-                .where(self.tasks_table.c.taskid == taskid)
+            reselect = sqla.select(self.tasks_table).where(
+                self.tasks_table.c.taskid == taskid
             )
             # read-only; use connect() (no autocommit)
             with self.engine.connect() as conn:
                 reloaded = list(conn.execute(reselect).all())
 
-            assert len(reloaded) == 1, \
-                    f"Got {len(reloaded)} rows for '{taskid}'"
+            assert len(reloaded) == 1, f"Got {len(reloaded)} rows for '{taskid}'"
 
             claimed = reloaded[0]
             _logger.debug(f"After claiming task: {claimed=}")
@@ -541,19 +575,16 @@ class TaskStatusDB(AbstractTaskStatusDB):
         status_statement = sqla.case(
             (
                 self.tasks_table.c.tries >= self.tasks_table.c.max_tries,
-                TaskStatus.TOO_MANY_RETRIES.value
+                TaskStatus.TOO_MANY_RETRIES.value,
             ),
-            else_=TaskStatus.AVAILABLE.value
+            else_=TaskStatus.AVAILABLE.value,
         )
         update_task_finished_fail = self._task_row_update_statement(
-            taskid,
-            status=status_statement,
-            old_status=TaskStatus.IN_PROGRESS
+            taskid, status=status_statement, old_status=TaskStatus.IN_PROGRESS
         )
         with self.engine.begin() as conn:
             result = conn.execute(update_task_finished_fail)
             self._validate_update_result(result)
-
 
     def _mark_task_completed_success(self, taskid: str):
         _logger.info(f"Marking task '{taskid}' as successfully completed")
@@ -569,9 +600,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         # 1. UPDATE the task status as completed
         update_task_completed = self._task_row_update_statement(
-            taskid,
-            status=TaskStatus.COMPLETED,
-            old_status=TaskStatus.IN_PROGRESS
+            taskid, status=TaskStatus.COMPLETED, old_status=TaskStatus.IN_PROGRESS
         )
 
         # 2. UPDATE all dependency rows where from==taskid to mark these as
@@ -596,9 +625,9 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         # 4. UPDATE tasks table to mark these tasks as available
         update_task_unblocked = self._task_row_update_statement(
-            taskid=sqla.bindparam('unblock'),
+            taskid=sqla.bindparam("unblock"),
             status=TaskStatus.AVAILABLE,
-            old_status=TaskStatus.BLOCKED
+            old_status=TaskStatus.BLOCKED,
         )
 
         # now we actually DO those steps
@@ -609,16 +638,15 @@ class TaskStatusDB(AbstractTaskStatusDB):
             candidates = conn.execute(update_deps).fetchall()
             candidates = {c[0] for c in candidates}
             _logger.debug("* Identifying which candidates should unblocked")
-            blocked = conn.execute(
-                still_blocked, {"candidates": candidates}
-            ).fetchall()
+            blocked = conn.execute(still_blocked, {"candidates": candidates}).fetchall()
             blocked = {c[0] for c in blocked}
             to_unblock = candidates - blocked
             if to_unblock:
                 _logger.debug("* Moving unblocked tasks to AVAILABLE")
-                unblocked = conn.execute(update_task_unblocked, [
-                    {'unblock': unblock} for unblock in to_unblock
-                ])
+                unblocked = conn.execute(
+                    update_task_unblocked,
+                    [{"unblock": unblock} for unblock in to_unblock],
+                )
             else:
                 _logger.debug("* No tasks to unblock")
 
@@ -632,14 +660,14 @@ class TaskStatusDB(AbstractTaskStatusDB):
     # and the dependencies table (no completed task should be blocking
     # anything)
     # def update_dependencies_to_match_tasks(self):
-        # 1. UPDATE rows in dependencies where blocking==True and where the
-        #    taskid in 'from' is marked COMPLETED is task table so that they
-        #    are now blocking=False; RETURNING 'to'
-        # 2. QUERY to find which of the resulting tasks (resultid) have no
-        #    no rows in dependencies where to==resultid and
-        #    blocking==True. These are the tasks that are now unblocked.
-        # 3. UPDATE tasks table to mark these tasks as available
+    # 1. UPDATE rows in dependencies where blocking==True and where the
+    #    taskid in 'from' is marked COMPLETED is task table so that they
+    #    are now blocking=False; RETURNING 'to'
+    # 2. QUERY to find which of the resulting tasks (resultid) have no
+    #    no rows in dependencies where to==resultid and
+    #    blocking==True. These are the tasks that are now unblocked.
+    # 3. UPDATE tasks table to mark these tasks as available
 
-        # NOTE: steps 2 and 3 are the same as above; step 1 is just the
-        # difference between doing this for all tasks and doing for one.
-        # Maybe this functions hsould be called from `mark_task_completed`?
+    # NOTE: steps 2 and 3 are the same as above; step 1 is just the
+    # difference between doing this for all tasks and doing for one.
+    # Maybe this functions hsould be called from `mark_task_completed`?
