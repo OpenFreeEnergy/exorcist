@@ -26,7 +26,7 @@ print("\n")
 
 # Pick up the first available task
 task_id = db.check_out_task()
-...  # insert your task is here
+...  # insert your task here
 db.mark_task_completed(task_id, success=True)
 tasks = pd.read_sql_table("tasks", db.engine)
 print("TASKS")

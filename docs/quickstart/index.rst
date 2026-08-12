@@ -66,7 +66,9 @@ Great! We have tasks and dependencies! So lets do some work and complete a task.
    tasks = pd.read_sql_table("tasks", db.engine)
    print(tasks)
 
-As we can see, a task has been completed and now our ``analyze-data`` task is availble.
+As we can see, a task has been completed and now our ``analyze-data`` task is available.
 
 This is the core of how ``exorcist`` works, you check out a task, read the task ID, and do some work with that ID.
 If it completes succesfully, mark it as such and the next task becomes available.
+
+For a complete example see `here <https://github.com/OpenFreeEnergy/exorcist/blob/main/examples/quickstart.py>`_.
