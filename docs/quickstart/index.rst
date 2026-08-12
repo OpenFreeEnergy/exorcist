@@ -61,6 +61,7 @@ Great! We have tasks and dependencies! So lets do some work and complete a task.
 
    # Pick up the first available task
    task_id = db.check_out_task()
+   ... # insert your task is here
    db.mark_task_completed(task_id, success=True)
    tasks = pd.read_sql_table("tasks", db.engine)
    print(tasks)
