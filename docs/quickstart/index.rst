@@ -41,7 +41,7 @@ So lets create a few tasks!
    # Edges describe execution order: prerequisite -> dependent task.
    workflow = nx.DiGraph([
        ("download-data", "analyze-data"),
-       ("anaylze-data", "write-report")
+       ("analyze-data", "write-report")
    ])
    db.add_task_network(workflow, max_tries=3)
 
