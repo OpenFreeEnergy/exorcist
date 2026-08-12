@@ -22,6 +22,7 @@ transition to a highly scalable solution when needed.
 
    guide/index
    api/index
+   quickstart/index
 
 
 
