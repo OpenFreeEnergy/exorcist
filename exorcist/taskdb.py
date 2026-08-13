@@ -261,7 +261,12 @@ class TaskStatusDB(AbstractTaskStatusDB):
         types_table = sqla.Table(
             "task_types",
             metadata,
-            sqla.Column("taskid", sqla.String, sqla.ForeignKey("tasks.taskid")),
+            sqla.Column(
+                "taskid",
+                sqla.String,
+                sqla.ForeignKey("tasks.taskid"),
+                primary_key=True,
+            ),
             sqla.Column("type", sqla.String),
         )
         # TODO: create indices that may be needed for performance
@@ -297,7 +302,6 @@ class TaskStatusDB(AbstractTaskStatusDB):
             * 'last_modified': datetime | None
             * 'tries': int
             * 'max_tries': int
-            * 'task_type': str
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
@@ -324,7 +328,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
         ]
         if task_type == "":
             return [task_data], deps_data, None
-        task_type_data = {"taskid": taskid, "task_type": task_type}
+        task_type_data = {"taskid": taskid, "type": task_type}
         return ([task_data], deps_data, task_type_data)
 
     def _insert_task_and_deps_data(self, task_data, deps_data, task_type_data):
@@ -347,7 +351,6 @@ class TaskStatusDB(AbstractTaskStatusDB):
             * 'last_modified': datetime | None
             * 'tries': int
             * 'max_tries': int
-            * 'task_type': str
 
         deps_data: List[Dict]
             list of dicts describing dependencies between tasks. Each dict
@@ -361,14 +364,13 @@ class TaskStatusDB(AbstractTaskStatusDB):
         """
         task_ins = sqla.insert(self.tasks_table).values(task_data)
         deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
-        task_type_ins = sqla.insert(self.task_types_table).values(task_type_data)
 
         with self.engine.begin() as conn:
-            res1 = conn.execute(task_ins)
+            conn.execute(task_ins)
             if deps_data:  # don't insert on empty deps
-                res2 = conn.execute(deps_ins)
+                conn.execute(deps_ins)
             if task_type_data:
-                res3 = conn.execute(task_type_ins)
+                conn.execute(sqla.insert(self.task_types_table).values(task_type_data))
 
     def add_task(
         self,
@@ -430,10 +432,11 @@ class TaskStatusDB(AbstractTaskStatusDB):
             )
             for node in nx.topological_sort(taskid_network)
         ]
-        tasklists, deplists = zip(*all_data)
+        tasklists, deplists, task_type_data = zip(*all_data)
         tasks = sum(tasklists, [])
         deps = sum(deplists, [])
-        self._insert_task_and_deps_data(tasks, deps)
+        task_type_data = [data for data in task_type_data if data is not None]
+        self._insert_task_and_deps_data(tasks, deps, task_type_data)
 
     def _task_row_update_statement(
         self,

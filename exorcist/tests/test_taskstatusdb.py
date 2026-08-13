@@ -26,8 +26,6 @@ def create_database(metadata, engine, extra_table=False,
         sqla.Column("tries", sqla.Integer),
         sqla.Column("max_tries", sqla.Integer),
     ]
-    if include_task_type:
-        task_columns.append(sqla.Column("task_type", sqla.String))
     deps_columns = [
         sqla.Column("from", sqla.String, sqla.ForeignKey("tasks.taskid")),
         sqla.Column("to", sqla.String, sqla.ForeignKey("tasks.taskid")),
@@ -44,6 +42,14 @@ def create_database(metadata, engine, extra_table=False,
     tasks_table = sqla.Table("tasks", metadata, *task_columns)
     if not missing_table:
         deps_talbe = sqla.Table("dependencies", metadata, *deps_columns)
+    if include_task_type:
+        types_table = sqla.Table(
+            "task_types",
+            metadata,
+            sqla.Column("taskid", sqla.String,
+                        sqla.ForeignKey("tasks.taskid"), primary_key=True),
+            sqla.Column("type", sqla.String),
+        )
 
     if extra_table:
         extra_table = sqla.Table("bar", metadata,
@@ -51,9 +57,8 @@ def create_database(metadata, engine, extra_table=False,
 
     metadata.create_all(bind=engine)
 
-def task_row(taskid, status, last_modified, tries, max_tries,
-             task_type=""):
-    return (taskid, status.value, last_modified, tries, max_tries, task_type)
+def task_row(taskid, status, last_modified, tries, max_tries):
+    return (taskid, status.value, last_modified, tries, max_tries)
 
 def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE,
                   task_type=""):
@@ -65,9 +70,6 @@ def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE,
         {'taskid': "bar", "status": TaskStatus.BLOCKED.value,
          'last_modified': None, 'tries': 0, 'max_tries': 3}
     ]
-    if "task_type" in metadata.tables["tasks"].c:
-        tasks[0]["task_type"] = task_type
-        tasks[1]["task_type"] = ""
     deps = [{'from': "foo", 'to': "bar", 'blocking': True}]
 
     ins_tasks = sqla.insert(metadata.tables['tasks']).values(tasks)
@@ -76,6 +78,10 @@ def add_mock_data(metadata, engine, tries=0, status=TaskStatus.AVAILABLE,
     with engine.connect() as conn:
         res1 = conn.execute(ins_tasks)
         res2 = conn.execute(ins_deps)
+        if task_type:
+            conn.execute(sqla.insert(metadata.tables['task_types']).values(
+                taskid="foo", type=task_type
+            ))
         conn.commit()
 
 _DEFAULT_DATETIME = datetime(1970, 1, 1)
@@ -113,7 +119,8 @@ def fresh_db(db_connect_string):
         bobby = """
         DROP TABLE IF EXISTS
           tasks,
-          dependencies
+          dependencies,
+          task_types
         CASCADE
         """
         with engine.begin() as conn:
@@ -135,14 +142,11 @@ def vshape_db(fresh_db):
     engine = fresh_db.engine
     tasks = [
         {'taskid': "foo", "status": TaskStatus.AVAILABLE.value,
-         'last_modified': None, 'tries': 0, 'max_tries': 3,
-         'task_type': ""},
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
         {'taskid': "bar", "status": TaskStatus.AVAILABLE.value,
-         'last_modified': None, 'tries': 0, 'max_tries': 3,
-         'task_type': ""},
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
         {'taskid': "baz", "status": TaskStatus.BLOCKED.value,
-         'last_modified': None, 'tries': 0, 'max_tries': 3,
-         'task_type': ""},
+         'last_modified': None, 'tries': 0, 'max_tries': 3},
     ]
     deps = [{'from': "foo", 'to': "baz", 'blocking': True},
             {'from': "bar", 'to': "baz", 'blocking': True}]
@@ -169,6 +173,10 @@ def get_tasks_and_deps(db):
         deps = set(conn.execute(sqla.select(db.dependencies_table)))
     return tasks, deps
 
+def get_task_types(db):
+    with db.engine.connect() as conn:
+        return set(conn.execute(sqla.select(db.task_types_table)))
+
 @pytest.fixture
 def diamond_taskid_network():
     graph = nx.DiGraph()
@@ -179,15 +187,18 @@ def diamond_taskid_network():
 class TestTaskStatusDB:
     @staticmethod
     def assert_is_our_db(db):
-        assert len(db.metadata.tables) == 2
-        assert set(db.metadata.tables) == {'tasks', 'dependencies'}
-        assert "task_type" in db.metadata.tables["tasks"].c
+        assert len(db.metadata.tables) == 3
+        assert set(db.metadata.tables) == {
+            'tasks', 'dependencies', 'task_types'
+        }
+        assert set(db.task_types_table.c.keys()) == {"taskid", "type"}
 
     @staticmethod
     def assert_is_fresh_db(db):
         TestTaskStatusDB.assert_is_our_db(db)
         assert count_rows(db, db.metadata.tables['tasks']) == 0
         assert count_rows(db, db.metadata.tables['dependencies']) == 0
+        assert count_rows(db, db.metadata.tables['task_types']) == 0
 
     def test_fresh_db(self, fresh_db):
         # this effectively tests that the __init__ method is working
@@ -296,8 +307,9 @@ class TestTaskStatusDB:
                           task_type="gpu")
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {task_row("gpu-task", TaskStatus.AVAILABLE, None,
-                                  0, 3, "gpu")}
+                                  0, 3)}
         assert deps == set()
+        assert get_task_types(fresh_db) == {("gpu-task", "gpu")}
 
     def test_add_task_before_requirements(self, fresh_db):
         fk_regex = re.compile("foreign key", re.I)
@@ -332,11 +344,12 @@ class TestTaskStatusDB:
         )
         tasks, _ = get_tasks_and_deps(fresh_db)
         assert tasks == {
-            task_row("A", TaskStatus.AVAILABLE, None, 0, 3, "cpu"),
+            task_row("A", TaskStatus.AVAILABLE, None, 0, 3),
             task_row("B", TaskStatus.BLOCKED, None, 0, 3),
             task_row("C", TaskStatus.BLOCKED, None, 0, 3),
-            task_row("D", TaskStatus.BLOCKED, None, 0, 3, "gpu"),
+            task_row("D", TaskStatus.BLOCKED, None, 0, 3),
         }
+        assert get_task_types(fresh_db) == {("A", "cpu"), ("D", "gpu")}
 
     def test_add_task_network_unknown_task_type_key(self, fresh_db,
                                                     diamond_taskid_network):
@@ -367,9 +380,9 @@ class TestTaskStatusDB:
         assert foo.status == TaskStatus.IN_PROGRESS.value
         assert foo.tries == 1
         assert foo.max_tries == 3
-        assert foo.task_type == ""
 
         assert bar == task_row("bar", TaskStatus.BLOCKED, None, 0, 3)
+        assert get_task_types(loaded_db) == set()
         taskdb_logger.setLevel(logging.NOTSET)
 
     def test_task_type_preserved_through_checkout_and_completion(self,
@@ -386,8 +399,9 @@ class TestTaskStatusDB:
 
         tasks, deps = get_tasks_and_deps(fresh_db)
         assert tasks == {task_row("gpu-task", TaskStatus.COMPLETED,
-                                  _DEFAULT_DATETIME, 1, 3, "gpu")}
+                                  _DEFAULT_DATETIME, 1, 3)}
         assert deps == set()
+        assert get_task_types(fresh_db) == {("gpu-task", "gpu")}
 
     def test_check_out_task_double_checkout(self, loaded_db):
         taskid = loaded_db.check_out_task()
