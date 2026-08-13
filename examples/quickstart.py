@@ -1,9 +1,13 @@
 import networkx as nx
-from exorcist import TaskStatus, TaskStatusDB
+from exorcist import TaskStatusDB
 import pandas as pd
+from pathlib import Path
 
 # Create a db on disk
-db = TaskStatusDB.from_filename("tasks.db")
+db_path = Path("tasks.db")
+if db_path.exists():
+    raise ValueError(f"{db_path} already exists, for this example, please delete it.")
+db = TaskStatusDB.from_filename(db_path)
 
 
 # Edges describe execution order: prerequisite -> dependent task.

@@ -30,7 +30,10 @@ We first need to create an exorcist TaskDB.
    from exorcist import TaskStatus, TaskStatusDB
    import pandas as pd
    # Create a db on disk
-   db = TaskStatusDB.from_filename("tasks.db")
+   db_path = Path("tasks.db")
+   if db_path.exists():
+       raise ValueError(f"{db_path} already exists, for this example, please delete it.")
+   db = TaskStatusDB.from_filename(db_path)
 
 
 In ``exorcist``, we represent task graphs using NetworkX DAGs.
