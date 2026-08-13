@@ -54,6 +54,21 @@ We can use ``pandas`` to view our tasks:
    print(tasks)
    print(deps)
 
+.. code-block:: sh
+    TASKS
+    =====
+              taskid  status last_modified  tries  max_tries task_type
+    0  download-data       1           NaT      0          3
+    1   analyze-data       0           NaT      0          3
+    2   write-report       0           NaT      0          3
+
+
+    DEPENDENCIES
+    ============
+                from            to  blocking
+    0  download-data  analyze-data      True
+    1   analyze-data  write-report      True
+
 
 Great! We have tasks and dependencies! So lets do some work and complete a task.
 
@@ -65,6 +80,17 @@ Great! We have tasks and dependencies! So lets do some work and complete a task.
    db.mark_task_completed(task_id, success=True)
    tasks = pd.read_sql_table("tasks", db.engine)
    print(tasks)
+
+
+.. code-block:: sh
+    TASKS
+    =====
+              taskid  status              last_modified  tries  max_tries task_type
+    0  download-data      99 2026-08-13 11:21:24.447458      1          3
+    1   analyze-data       1 2026-08-13 11:21:24.447549      0          3
+    2   write-report       0                        NaT      0          3
+
+
 
 As we can see, a task has been completed and now our ``analyze-data`` task is available.
 
