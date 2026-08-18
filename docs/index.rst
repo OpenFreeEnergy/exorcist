@@ -23,6 +23,7 @@ transition to a highly scalable solution when needed.
    quickstart/index
    guide/index
    api/index
+   CHANGELOG
 
 
 
