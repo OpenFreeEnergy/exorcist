@@ -131,3 +131,6 @@ dmypy.json
 # Uv lockfile
 uv.lock
 *.db
+
+# Rever
+rever/
