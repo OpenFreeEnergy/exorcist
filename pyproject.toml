@@ -9,7 +9,7 @@ requires = [
 name = "exorcist"
 description = "Daemonless campaign-scale simulation orchestration "
 readme = "README.md"
-version = "0.1.0"
+dynamic = ["version"]
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "The OpenFE developers", email = "openfreeenergy@omsf.io" }]
