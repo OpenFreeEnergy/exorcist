@@ -1,8 +1,15 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+  "setuptools>=77.0.3",
+  "setuptools-scm>=8",
+]
+
 [project]
 name = "exorcist"
 description = "Daemonless campaign-scale simulation orchestration "
 readme = "README.md"
-version = "0.1.0"
+dynamic = ["version"]
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [{ name = "The OpenFE developers", email = "openfreeenergy@omsf.io" }]
@@ -28,6 +35,9 @@ include-package-data = true
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["exorcist*"]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
 
 [tool.mypy]
 files = ["exorcist"]
