@@ -331,7 +331,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
         task_type_data = {"taskid": taskid, "type": task_type}
         return ([task_data], deps_data, task_type_data)
 
-    def _insert_task_and_deps_data(self, task_data, deps_data, task_type_data):
+    def _insert_task_and_deps_data(self, conn, task_data, deps_data, task_type_data):
         """Insert data into database.
 
         This performs the actual insertion of task data into a database
@@ -342,6 +342,8 @@ class TaskStatusDB(AbstractTaskStatusDB):
 
         Parameters
         ----------
+        conn: sqlalchemy.Connection
+            active SQLAlchemy connection for the current transaction
         task_data: List[Dict]
             list of dicts describing tasks. Each dict consists of the
             following keys (with type after colon):
@@ -365,12 +367,16 @@ class TaskStatusDB(AbstractTaskStatusDB):
         task_ins = sqla.insert(self.tasks_table).values(task_data)
         deps_ins = sqla.insert(self.dependencies_table).values(deps_data)
 
-        with self.engine.begin() as conn:
-            conn.execute(task_ins)
-            if deps_data:  # don't insert on empty deps
-                conn.execute(deps_ins)
-            if task_type_data:
-                conn.execute(sqla.insert(self.task_types_table).values(task_type_data))
+        conn.execute(task_ins)
+        if deps_data:  # don't insert on empty deps
+            conn.execute(deps_ins)
+        if task_type_data:
+            conn.execute(sqla.insert(self.task_types_table).values(task_type_data))
+    def _add_task(self, conn, taskid: str, requirements: Iterable[str],
+                  max_tries: int, task_type: str = ""):
+        task_data, deps, task_type_data = self._get_task_and_dep_data(taskid, requirements,
+                                                      max_tries, task_type)
+        self._insert_task_and_deps_data(conn, task_data, deps, task_type_data)
 
     def add_task(
         self,
@@ -394,10 +400,33 @@ class TaskStatusDB(AbstractTaskStatusDB):
         task_type: str
             application-defined task type metadata for downstream routing
         """
-        task_data, deps, task_type_data = self._get_task_and_dep_data(
-            taskid, requirements, max_tries, task_type
-        )
-        self._insert_task_and_deps_data(task_data, deps, task_type_data)
+    
+        with self.engine.begin() as conn:
+            self._add_task(conn, taskid, requirements, max_tries, task_type)
+
+    def _add_task_network(
+        self,
+        conn,
+        taskid_network: nx.DiGraph,
+        max_tries: int,
+        task_types: Optional[Mapping[str, str]] = None,
+    ):
+        task_types = {} if task_types is None else dict(task_types)
+        unknown_tasks = set(task_types) - set(taskid_network.nodes)
+        if unknown_tasks:
+            raise ValueError("Received task types for unknown tasks: "
+                             + str(sorted(unknown_tasks)))
+
+        all_data = [
+            self._get_task_and_dep_data(node, taskid_network.pred[node],
+                                        max_tries, task_types.get(node, ""))
+            for node in nx.topological_sort(taskid_network)
+        ]
+        tasklists, deplists, task_type_data = zip(*all_data)
+        tasks = sum(tasklists, [])
+        deps = sum(deplists, [])
+        task_type_data = [data for data in task_type_data if data is not None]
+        self._insert_task_and_deps_data(conn, tasks, deps, task_type_data)
 
     def add_task_network(
         self,
@@ -419,24 +448,8 @@ class TaskStatusDB(AbstractTaskStatusDB):
         task_types: Optional[Mapping[str, str]]
             optional application-defined task type metadata keyed by taskid
         """
-        task_types = {} if task_types is None else dict(task_types)
-        unknown_tasks = set(task_types) - set(taskid_network.nodes)
-        if unknown_tasks:
-            raise ValueError(
-                "Received task types for unknown tasks: " + str(sorted(unknown_tasks))
-            )
-
-        all_data = [
-            self._get_task_and_dep_data(
-                node, taskid_network.pred[node], max_tries, task_types.get(node, "")
-            )
-            for node in nx.topological_sort(taskid_network)
-        ]
-        tasklists, deplists, task_type_data = zip(*all_data)
-        tasks = sum(tasklists, [])
-        deps = sum(deplists, [])
-        task_type_data = [data for data in task_type_data if data is not None]
-        self._insert_task_and_deps_data(tasks, deps, task_type_data)
+        with self.engine.begin() as conn:
+            self._add_task_network(conn, taskid_network, max_tries, task_types)
 
     def _task_row_update_statement(
         self,
@@ -524,11 +537,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
                 f"Task '{taskid}' could not change from {old_status} to {status}"
             )
 
-    def check_out_task(self):
-        # TODO: may need move this to a single attempt function and wrap it
-        # in while loop to catch NoStatusChange errors until we have a
-        # successful checkout
-        _logger.info("Checking out a new task")
+    def _check_out_task(self, conn):
         subq = (
             sqla.select(self.tasks_table.c.taskid)
             .where(self.tasks_table.c.status == TaskStatus.AVAILABLE.value)
@@ -536,14 +545,21 @@ class TaskStatusDB(AbstractTaskStatusDB):
             .limit(1)
             .scalar_subquery()
         )
+        update_stmt = self._task_row_update_statement(
+            taskid=subq,
+            status=TaskStatus.IN_PROGRESS,
+            is_checkout=True,
+            old_status=TaskStatus.AVAILABLE,
+        ).returning(self.tasks_table.c.taskid)
+        return list(conn.execute(update_stmt))
+
+    def check_out_task(self):
+        # TODO: may need move this to a single attempt function and wrap it
+        # in while loop to catch NoStatusChange errors until we have a
+        # successful checkout
+        _logger.info("Checking out a new task")
         with self.engine.begin() as conn:
-            update_stmt = self._task_row_update_statement(
-                taskid=subq,
-                status=TaskStatus.IN_PROGRESS,
-                is_checkout=True,
-                old_status=TaskStatus.AVAILABLE,
-            ).returning(self.tasks_table.c.taskid)
-            result = list(conn.execute(update_stmt))
+            result = self._check_out_task(conn)
 
         if len(result) == 1:
             taskid = result[0][0]
@@ -573,7 +589,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
         _logger.info(f"Selected task '{taskid}'")
         return taskid
 
-    def _mark_task_completed_failure(self, taskid: str):
+    def _mark_task_completed_failure(self, conn, taskid: str):
         _logger.info(f"Marking try of {taskid} as failed.")
         status_statement = sqla.case(
             (
@@ -585,11 +601,11 @@ class TaskStatusDB(AbstractTaskStatusDB):
         update_task_finished_fail = self._task_row_update_statement(
             taskid, status=status_statement, old_status=TaskStatus.IN_PROGRESS
         )
-        with self.engine.begin() as conn:
-            result = conn.execute(update_task_finished_fail)
-            self._validate_update_result(result)
+        result = conn.execute(update_task_finished_fail)
+        self._validate_update_result(result)
 
-    def _mark_task_completed_success(self, taskid: str):
+
+    def _mark_task_completed_success(self, conn, taskid: str):
         _logger.info(f"Marking task '{taskid}' as successfully completed")
         # TODO: there may be ways to make this faster; this is likely to be
         # the most important point for performance considerations
@@ -634,30 +650,30 @@ class TaskStatusDB(AbstractTaskStatusDB):
         )
 
         # now we actually DO those steps
-        with self.engine.begin() as conn:
-            _logger.debug("* Setting task status to COMPLETED")
-            completed_task = conn.execute(update_task_completed)
-            _logger.debug("* Identifying candidates to unblock")
-            candidates = conn.execute(update_deps).fetchall()
-            candidates = {c[0] for c in candidates}
-            _logger.debug("* Identifying which candidates should unblocked")
-            blocked = conn.execute(still_blocked, {"candidates": candidates}).fetchall()
-            blocked = {c[0] for c in blocked}
-            to_unblock = candidates - blocked
-            if to_unblock:
-                _logger.debug("* Moving unblocked tasks to AVAILABLE")
-                unblocked = conn.execute(
+        _logger.debug("* Setting task status to COMPLETED")
+        completed_task = conn.execute(update_task_completed)
+        _logger.debug("* Identifying candidates to unblock")
+        candidates = conn.execute(update_deps).fetchall()
+        candidates = {c[0] for c in candidates}
+        _logger.debug("* Identifying which candidates should unblocked")
+        blocked = conn.execute(still_blocked, {"candidates": candidates}).fetchall()
+        blocked = {c[0] for c in blocked}
+        to_unblock = candidates - blocked
+        if to_unblock:
+            _logger.debug("* Moving unblocked tasks to AVAILABLE")
+            unblocked = conn.execute(
                     update_task_unblocked,
                     [{"unblock": unblock} for unblock in to_unblock],
                 )
-            else:
-                _logger.debug("* No tasks to unblock")
+        else:
+            _logger.debug("* No tasks to unblock")
 
     def mark_task_completed(self, taskid: str, success: bool):
-        if success:
-            return self._mark_task_completed_success(taskid)
-        else:
-            return self._mark_task_completed_failure(taskid)
+        with self.engine.begin() as conn:
+            if success:
+                return self._mark_task_completed_success(conn, taskid)
+            else:
+                return self._mark_task_completed_failure(conn, taskid)
 
     # TODO: add a method that forces consistency between task table's status
     # and the dependencies table (no completed task should be blocking
