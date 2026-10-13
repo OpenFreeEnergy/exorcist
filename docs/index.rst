@@ -20,8 +20,10 @@ transition to a highly scalable solution when needed.
    :maxdepth: 2
    :caption: Contents:
 
+   quickstart/index
    guide/index
    api/index
+   CHANGELOG
 
 
 
