@@ -315,6 +315,11 @@ class TestTaskStatusDB:
         with pytest.raises(RuntimeError, "not seem to be a task database"):
             TaskStatusDB(engine)
 
+    def test_rejected_db(self, fresh_db):
+        with mock.patch.object(TaskStatusDB, "_is_our_db", return_value=False):
+            with pytest.raises(RuntimeError, match="does not seem to be a task database"):
+                TaskStatusDB(fresh_db.engine)
+
     @pytest.mark.parametrize('fixture', ['fresh_db', 'loaded_db'])
     def test_tasks_table(self, request, fixture):
         expected = {
