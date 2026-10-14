@@ -556,6 +556,10 @@ class TestTaskStatusDB:
         assert tasks["foo"].max_tries == 5
         assert tasks["bar"].max_tries == 3
 
+    def test_mark_task_completed_failure_not_in_progress(self, loaded_db):
+        with pytest.raises(NoStatusChange, match="Task update did not change any rows"):
+            loaded_db.mark_task_completed("foo", success=False)
+
     def test_mark_task_completed_failure_retry(self, fresh_db):
         add_mock_data(fresh_db.metadata, fresh_db.engine, tries=1,
                       status=TaskStatus.IN_PROGRESS)

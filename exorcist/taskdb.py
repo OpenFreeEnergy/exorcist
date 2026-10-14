@@ -533,9 +533,7 @@ class TaskStatusDB(AbstractTaskStatusDB):
                 f"taskid '{taskid}'. This should not happen."
             )
         elif result.rowcount == 0:
-            raise NoStatusChange(
-                f"Task '{taskid}' could not change from {old_status} to {status}"
-            )
+            raise NoStatusChange("Task update did not change any rows")
 
     def _check_out_task(self, conn):
         subq = (
