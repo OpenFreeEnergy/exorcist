@@ -203,9 +203,11 @@ class RecordingTaskStatusDB(TaskStatusDB):
         return super()._add_task_network(conn, taskid_network, max_tries,
                                          task_types)
 
-    def _insert_task_and_deps_data(self, conn, task_data, deps_data):
+    def _insert_task_and_deps_data(self, conn, task_data, deps_data,
+                                 task_type_data):
         self._record_hook(conn, "_insert_task_and_deps_data")
-        return super()._insert_task_and_deps_data(conn, task_data, deps_data)
+        return super()._insert_task_and_deps_data(conn, task_data, deps_data,
+                                                task_type_data)
 
     def _check_out_task(self, conn):
         self._record_hook(conn, "_check_out_task")
@@ -408,9 +410,8 @@ class TestTaskStatusDB:
         assert db.check_out_task() == "bar"
         db.mark_task_completed("bar", success=False)
 
-        tasks = {row.taskid: row for row in db.get_all_tasks()}
-        assert tasks["foo"].task_type == "gpu"
-        assert tasks["bar"].task_type == ""
+        assert get_task_types(db) == {("foo", "gpu")}
+        assert not any(row.taskid == "bar" for row in get_task_types(db))
         assert get_audit_events(db) == [
             "_add_task",
             "_insert_task_and_deps_data",
@@ -428,10 +429,7 @@ class TestTaskStatusDB:
         db.add_task_network(diamond_taskid_network, max_tries=3,
                             task_types={"A": "cpu", "D": "gpu"})
 
-        tasks = {row.taskid: row for row in db.get_all_tasks()}
-        assert {taskid: row.task_type for taskid, row in tasks.items()} == {
-            "A": "cpu", "B": "", "C": "", "D": "gpu",
-        }
+        assert get_task_types(db) == {("A", "cpu"), ("D", "gpu")}
         assert get_audit_events(db) == [
             "_add_task_network",
             "_insert_task_and_deps_data",
