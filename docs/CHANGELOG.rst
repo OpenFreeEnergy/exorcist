@@ -4,6 +4,16 @@ CHANGELOG
 
 .. current developments
 
+v0.1.1
+====================
+
+**Changed:**
+
+* In-transaction logic has been moved into private methods.
+  This improves the ability to make custom subclasses (`PR #44 <https://github.com/OpenFreeEnergy/exorcist/pull/44>`_).
+
+
+
 v0.1.0
 ====================
 
