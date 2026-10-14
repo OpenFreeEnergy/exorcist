@@ -546,6 +546,16 @@ class TestTaskStatusDB:
                       status=TaskStatus.IN_PROGRESS)
         assert fresh_db.check_out_task() is None
 
+    def test_task_row_update_max_tries(self, loaded_db):
+        with loaded_db.engine.begin() as conn:
+            conn.execute(loaded_db._task_row_update_statement(
+                "foo", TaskStatus.AVAILABLE, max_tries=5
+            ))
+
+        tasks = {row.taskid: row for row in loaded_db.get_all_tasks()}
+        assert tasks["foo"].max_tries == 5
+        assert tasks["bar"].max_tries == 3
+
     def test_mark_task_completed_failure_retry(self, fresh_db):
         add_mock_data(fresh_db.metadata, fresh_db.engine, tries=1,
                       status=TaskStatus.IN_PROGRESS)
