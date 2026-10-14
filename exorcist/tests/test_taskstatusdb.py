@@ -382,6 +382,10 @@ class TestTaskStatusDB:
         assert deps == set()
         assert get_task_types(fresh_db) == {("gpu-task", "gpu")}
 
+    def test_add_mock_data_with_task_type(self, fresh_db):
+        add_mock_data(fresh_db.metadata, fresh_db.engine, task_type="gpu")
+        assert get_task_types(fresh_db) == {("foo", "gpu")}
+
     def test_add_task_before_requirements(self, fresh_db):
         fk_regex = re.compile("foreign key", re.I)
         with pytest.raises(sqla.exc.IntegrityError, match=fk_regex):
